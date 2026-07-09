@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+# Foreman shell wrapper.
+set -euo pipefail
+# Resolve symlinks so ~/.local/bin/foreman -> /real/path/foreman/bin/foreman
+# still finds the repo root.
+_resolve() {
+  local src="$1" dir
+  while [ -L "$src" ]; do
+    dir="$(cd -P "$(dirname "$src")" >/dev/null && pwd)"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="$dir/$src"
+  done
+  cd -P "$(dirname "$src")" >/dev/null && pwd
+}
+FOREMAN_HOME="${FOREMAN_HOME:-$(cd "$(_resolve "$0")/.." && pwd)}"
+TOOLS="$FOREMAN_HOME/foreman/tools"
+PROJECT="${FOREMAN_PROJECT:-$PWD}"
+# Export so sub-agents that shell out with `foreman ...` inherit these.
+export FOREMAN_HOME FOREMAN_PROJECT="$PROJECT"
+
+cmd="${1:-}"; shift || true
+
+case "$cmd" in
+  info)     exec python3 "$TOOLS/project_info.py" --project "$PROJECT" "$@" ;;
+  plan)     exec python3 "$TOOLS/plan.py"         --project "$PROJECT" "$@" ;;
+  validate) exec python3 "$TOOLS/validate.py"     --project "$PROJECT" "$@" ;;
+  verify)   exec python3 "$TOOLS/verify.py"       --project "$PROJECT" "$@" ;;
+  commit)   exec python3 "$TOOLS/commit.py"       --project "$PROJECT" "$@" ;;
+  rollback) exec python3 "$TOOLS/rollback.py"     --project "$PROJECT" "$@" ;;
+  init)     exec python3 "$TOOLS/init.py"         --project "$PROJECT" "$@" ;;
+  debt)     exec python3 "$TOOLS/debt.py"         --project "$PROJECT" "$@" ;;
+
+  deploy)
+    sub="${1:-list}"; shift || true
+    case "$sub" in
+      list)
+        exec python3 "$TOOLS/deploy.py" --project "$PROJECT" --list "$@" ;;
+      install)
+        exec python3 "$TOOLS/deploy.py" --project "$PROJECT" --install "$@" ;;
+      *)
+        echo "{\"ok\":false,\"message\":\"unknown deploy subcommand: $sub\",\"hint\":\"try: list | install\"}"
+        exit 2 ;;
+    esac
+    ;;
+
+  spawn)
+    role="${1:?role required}"; shift
+    tid="${1:-}"; [ -n "$tid" ] && shift || true
+    exec python3 "$TOOLS/spawn.py" --project "$PROJECT" --role "$role" \
+      ${tid:+--task-id "$tid"} "$@"
+    ;;
+
+  handoff)
+    tid="${1:?task-id required}"; shift
+    role="${1:?role required}"; shift
+    exec python3 "$TOOLS/handoff.py" --project "$PROJECT" \
+      --task-id "$tid" --role "$role" --stdin "$@"
+    ;;
+
+  state)
+    sub="${1:-summary}"; shift || true
+    case "$sub" in
+      pending|ready|blocked|all|dag|reset|resume|escalations)
+        exec python3 "$TOOLS/state.py" --project "$PROJECT" "--$sub" "$@" ;;
+      import)
+        exec python3 "$TOOLS/state.py" --project "$PROJECT" --import "$@" ;;
+      add)
+        tid="${1:?task-id}"; shift
+        desc="${1:?description}"; shift
+        exec python3 "$TOOLS/state.py" --project "$PROJECT" --add "$tid" --desc "$desc" "$@" ;;
+      done)
+        tid="${1:?task-id}"; shift
+        exec python3 "$TOOLS/state.py" --project "$PROJECT" --mark "$tid" --status done "$@" ;;
+      fail)
+        tid="${1:?task-id}"; shift
+        err="${1:-}"; [ -n "$err" ] && shift || true
+        exec python3 "$TOOLS/state.py" --project "$PROJECT" --mark "$tid" --status failed ${err:+--error "$err"} "$@" ;;
+      task)
+        tid="${1:?task-id}"; shift
+        exec python3 "$TOOLS/state.py" --project "$PROJECT" --task "$tid" "$@" ;;
+      guide)
+        tid="${1:?task-id}"; shift
+        exec python3 "$TOOLS/state.py" --project "$PROJECT" --guide "$tid" "$@" ;;
+      auto)
+        tid="${1:?task-id}"; shift
+        exec python3 "$TOOLS/state.py" --project "$PROJECT" --auto "$tid" "$@" ;;
+      batch)
+        n="${1:-3}"; [ -n "${1:-}" ] && shift || true
+        exec python3 "$TOOLS/state.py" --project "$PROJECT" --batch "$n" "$@" ;;
+      template)
+        name="${1:?template name}"; shift
+        exec python3 "$TOOLS/state.py" --project "$PROJECT" --template "$name" "$@" ;;
+      summary|"")
+        exec python3 "$TOOLS/state.py" --project "$PROJECT" "$@" ;;
+      *)
+        echo "{\"ok\":false,\"message\":\"unknown state subcommand: $sub\",\"hint\":\"try: pending|ready|blocked|all|dag|reset|resume|escalations|import|add|done|fail|task|guide|auto|batch|template|summary\"}"
+        exit 2 ;;
+    esac
+    ;;
+
+  next)
+    # Single JSON: {brief, ready, guidance}
+    brief=$(python3 "$TOOLS/project_info.py" --project "$PROJECT" --brief 2>/dev/null || echo "?")
+    ready=$(python3 "$TOOLS/state.py" --project "$PROJECT" --ready 2>/dev/null || echo '{"ok":false}')
+    python3 - <<PYEOF
+import json
+try:
+    r = json.loads('''$ready''')
+except Exception:
+    r = {"ok": False, "count": 0, "tasks": []}
+guide = ("Task DAG is empty — spawn product_owner and import tasks" if r.get("count", 0) == 0
+         else f"Next: foreman state guide {r['tasks'][0]['id']}" if r.get("tasks") else "No ready tasks")
+print(json.dumps({"brief": "$brief".strip(), "ready": r, "guidance": guide}, indent=2))
+PYEOF
+    ;;
+
+  log)
+    logfile="$PROJECT/.foreman/log.jsonl"
+    if [ ! -f "$logfile" ]; then
+      echo '{"ok":true,"message":"no log yet"}'
+      exit 0
+    fi
+    if [ "${1:-}" = "--summary" ]; then
+      python3 - "$logfile" <<'PYEOF'
+import json, sys
+from collections import Counter
+by_tool, exits, ms_by_tool = Counter(), Counter(), {}
+n = 0
+for line in open(sys.argv[1]):
+    try: r = json.loads(line)
+    except Exception: continue
+    n += 1
+    by_tool[r.get("tool","?")] += 1
+    exits[r.get("exit",0)] += 1
+    t = r.get("tool","?"); ms_by_tool.setdefault(t, []).append(r.get("ms",0))
+out = {"ok": True, "total_calls": n, "by_tool": dict(by_tool.most_common()),
+       "exit_codes": dict(exits),
+       "avg_ms": {t: round(sum(v)/len(v)) for t,v in ms_by_tool.items() if v}}
+print(json.dumps(out, indent=2))
+PYEOF
+    elif [ "${1:-}" = "--task" ]; then
+      tid="${2:?task-id required}"
+      python3 - "$logfile" "$tid" <<'PYEOF'
+import json, sys
+tid = sys.argv[2]
+out = []
+for line in open(sys.argv[1]):
+    try: r = json.loads(line)
+    except Exception: continue
+    if r.get("task_id") == tid or (tid in r.get("args", [])):
+        out.append(r)
+print(json.dumps({"ok": True, "task_id": tid, "count": len(out), "events": out}, indent=2))
+PYEOF
+    else
+      n="${1:-20}"
+      tail -n "$n" "$logfile"
+    fi
+    ;;
+
+  doctor)
+    # Self-check: env, wrapper, prompts, python, project layout
+    python3 - "$FOREMAN_HOME" "$PROJECT" <<'PYEOF'
+import json, os, shutil, subprocess, sys
+home, proj = sys.argv[1], sys.argv[2]
+checks = []
+def c(name, ok, detail=""):
+    checks.append({"check": name, "ok": bool(ok), "detail": detail})
+c("FOREMAN_HOME", os.path.isdir(os.path.join(home, "foreman", "tools")), home)
+c("prompts/roles", len(os.listdir(os.path.join(home, "prompts", "roles"))) == 8, "expect 8 role files")
+c("skills/foreman.md", os.path.exists(os.path.join(home, "skills", "foreman.md")))
+c("templates", len([f for f in os.listdir(os.path.join(home, "templates")) if f.endswith(".json")]) >= 3, "expect >=3 JSON templates")
+c("python3", shutil.which("python3") is not None)
+c("git", shutil.which("git") is not None)
+c("flutter", shutil.which("flutter") is not None, "(optional)")
+c("dart", shutil.which("dart") is not None, "(optional; needed for verify --ast)")
+c("gh", shutil.which("gh") is not None, "(optional; needed for foreman pr)")
+c("PROJECT exists", os.path.isdir(proj), proj)
+c("PROJECT is git repo", os.path.isdir(os.path.join(proj, ".git")), "(optional; needed for commit)")
+if os.path.abspath(proj) != os.path.abspath(home):
+    c(".opencode/skills link", os.path.islink(os.path.join(proj, ".opencode", "skills", "foreman.md")), "(optional; from install.sh)")
+c(".foreman/", os.path.isdir(os.path.join(proj, ".foreman")), "(optional; created on first tool run)")
+failed = [x for x in checks if not x["ok"] and "optional" not in x["detail"].lower()]
+print(json.dumps({"ok": len(failed) == 0, "checks": checks,
+                   "critical_failures": len(failed)}, indent=2))
+sys.exit(0 if not failed else 1)
+PYEOF
+    ;;
+
+  branch)
+    # Create/switch branch: `foreman branch feature/t3`
+    name="${1:?branch name required}"; shift
+    exec git -C "$PROJECT" checkout -B "$name" "$@"
+    ;;
+
+  pr)
+    # Open a PR for current branch: `foreman pr "title" [body]`
+    title="${1:?title required}"; shift
+    body="${1:-Automated PR by foreman}"; [ -n "${1:-}" ] && shift || true
+    if ! command -v gh >/dev/null 2>&1; then
+      echo '{"ok":false,"message":"gh CLI not installed. See: cli.github.com"}'
+      exit 1
+    fi
+    exec gh pr create -R "$(git -C "$PROJECT" remote get-url origin 2>/dev/null | sed 's|.*/\([^/]*/[^/]*\)\.git|\1|')" \
+      --title "$title" --body "$body" "$@"
+    ;;
+
+  ""|help|-h|--help)
+    cat <<EOF
+foreman <cmd> [args]
+
+Project inspection:
+  info [--summary|--brief|--filter PATH|--since REF|--lines N]
+  plan [--section NAME|--lines N|--no-cache]
+  next                              # brief + ready + guidance (one JSON)
+  log [N]                           # tail last N audit lines
+
+Validate & commit:
+  validate [--lines N|--dry-run]
+  verify [--task-id ID|--files ...|--strict]
+  commit --task-id ID --desc "..." [--branch feat/t3] [--dry-run]
+  rollback [--dry-run]
+  init
+
+Sub-agents:
+  spawn <role> [task_id] [--acceptance ...] [--plan ...] [--load-from ROLE]
+                        [--error ...] [--save] [--self-handoff]
+                        [--estimate-tokens]
+  handoff <task_id> <role>          # stdin: raw sub-agent output
+
+Verify (regex + optional AST):
+  verify [--task-id ID|--files ...|--strict|--ast|--ast-only]
+
+Validate (with coverage):
+  validate [--lines N|--dry-run|--coverage|--min-coverage PCT]
+
+Task DAG:
+  state pending | ready | blocked | all | dag | reset
+  state add <id> "<desc>" [--deps a,b] [--acceptance "..."]
+  state done <id>
+  state fail <id> [error]
+  state task <id>
+  state guide <id>                  # next step for this task
+  state auto <id>                   # entire command sequence for this task
+  state batch [N]                   # N parallel-safe ready tasks
+  state import                      # stdin JSON: {"tasks":[...]}
+  state template <name>             # seed from templates/ (todo|chat|blog)
+
+Git & PR:
+  branch <name>                     # create/switch branch
+  pr "<title>" ["<body>"]           # open PR via gh CLI
+
+Deploy (build + install on device):
+  deploy list [--platform ios|android|macos|web|linux|windows]
+  deploy install --device <id> [--mode debug|profile|release]
+  deploy install --platform ios    (auto-pick first iOS device)
+
+Self-check:
+  doctor                            # env + install sanity check
+  log --summary                     # aggregate audit log stats
+  debt [--path lib/]                # harvest `ponytail:` markers
+EOF
+    ;;
+  *)
+    echo "unknown command: $cmd" >&2; exit 2 ;;
+esac

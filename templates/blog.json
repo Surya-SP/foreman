@@ -1,0 +1,13 @@
+{
+  "name": "blog",
+  "framework": "flutter",
+  "description": "Read-only blog reader from bundled markdown files.",
+  "tasks": [
+    {"id": "scaffold",   "description": "Scaffold main.dart + Material app",              "acceptance": "app launches to post list",          "depends_on": []},
+    {"id": "assets",     "description": "Add posts/*.md as bundled assets in pubspec",   "acceptance": "AssetManifest lists all posts",       "depends_on": ["scaffold"]},
+    {"id": "post_model", "description": "Post model (title, date, body, slug)",           "acceptance": "unit test parses front-matter",       "depends_on": ["assets"]},
+    {"id": "loader",     "description": "PostLoader reads + caches all bundled posts",   "acceptance": "loader returns list sorted by date",  "depends_on": ["post_model"]},
+    {"id": "list_ui",    "description": "PostListScreen showing title + date",            "acceptance": "tapping opens detail view",           "depends_on": ["loader"]},
+    {"id": "detail_ui",  "description": "PostDetailScreen renders markdown body",         "acceptance": "headings, lists, code blocks render", "depends_on": ["list_ui"]}
+  ]
+}

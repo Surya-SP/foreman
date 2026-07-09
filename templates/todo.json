@@ -1,0 +1,14 @@
+{
+  "name": "todo",
+  "framework": "flutter",
+  "description": "Minimal to-do list app: create/edit/complete/delete items, local persistence.",
+  "tasks": [
+    {"id": "scaffold", "description": "Scaffold main.dart, MaterialApp, routes", "acceptance": "flutter run launches empty screen", "depends_on": []},
+    {"id": "model",    "description": "Todo model class + JSON serialization",     "acceptance": "Todo.toJson/fromJson round-trip in unit test", "depends_on": ["scaffold"]},
+    {"id": "storage",  "description": "SharedPreferences-backed TodoRepository",   "acceptance": "add/get/update/delete persists across restarts", "depends_on": ["model"]},
+    {"id": "list_ui",  "description": "TodoListScreen with reactive list widget",  "acceptance": "empty state + populated list both render",       "depends_on": ["storage"]},
+    {"id": "add_ui",   "description": "AddTodoScreen with title + save",           "acceptance": "user can add and see it in list",                "depends_on": ["list_ui"]},
+    {"id": "toggle",   "description": "Tap toggles complete; strike-through UI",   "acceptance": "tap changes state, persists",                    "depends_on": ["list_ui"]},
+    {"id": "delete",   "description": "Swipe-to-delete with undo snackbar",        "acceptance": "delete removes; undo restores",                  "depends_on": ["list_ui"]}
+  ]
+}

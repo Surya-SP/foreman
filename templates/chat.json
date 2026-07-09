@@ -1,0 +1,13 @@
+{
+  "name": "chat",
+  "framework": "flutter",
+  "description": "Single-room chat client with local echo (no backend).",
+  "tasks": [
+    {"id": "scaffold",  "description": "Scaffold main.dart + Material app + routes",         "acceptance": "app launches to empty chat screen",   "depends_on": []},
+    {"id": "message",   "description": "Message model (id, author, text, ts)",               "acceptance": "unit test round-trips model",         "depends_on": ["scaffold"]},
+    {"id": "store",     "description": "In-memory MessageStore with ChangeNotifier",         "acceptance": "add + list, notifies listeners",      "depends_on": ["message"]},
+    {"id": "list_ui",   "description": "Scrolling ListView of message bubbles",              "acceptance": "own vs other bubbles align differently","depends_on": ["store"]},
+    {"id": "input_ui",  "description": "Bottom text field + send button",                    "acceptance": "send appends to store, clears input",  "depends_on": ["list_ui"]},
+    {"id": "echo_bot",  "description": "Auto-reply bot echoes user text after 500ms",         "acceptance": "user message triggers echo response",  "depends_on": ["input_ui"]}
+  ]
+}
