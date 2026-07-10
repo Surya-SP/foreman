@@ -283,31 +283,38 @@ if "--guide" in sys.argv:
 
 # ---- Auto (full sequence, adaptive) ----
 if "--auto" in sys.argv:
-    if task_id not in state: _out({"ok": False, "message": f"Task '{task_id}' not found"}, 1)
+    if not task_id:
+        _out({"ok": False, "message": "state auto requires a task-id",
+              "hint": "foreman state auto scaffold",
+              "note": "auto only PRINTS the plan — use foreman run to execute"}, 1)
+    if task_id not in state: _out({"ok": False, "message": f"Task '{task_id}' not found",
+                                   "hint": "foreman state all"}, 1)
     have = _handoff_files(task_id)
     st = _status(state[task_id])
 
     if st == "done":
-        _out({"ok": True, "task": task_id, "status": "done", "sequence": [{"step": 0, "cmd": "# already done"}]})
+        _out({"ok": True, "task": task_id, "status": "done", "sequence": [{"step": 0, "cmd": "# already done"}],
+              "note": "This is a plan only. Autonomous execution: foreman run"})
     if st == "failed":
         _out({"ok": True, "task": task_id, "status": "failed",
+              "note": "This is a plan only. Autonomous execution: foreman run",
               "sequence": [{"step": 1, "cmd": f"foreman spawn debugger {task_id} --error \"$(foreman validate --lines 200)\""},
                           {"step": 2, "cmd": f"foreman handoff {task_id} debugger", "stdin": "sub-agent output"},
                           {"step": 3, "cmd": "foreman validate --lines 200"}]})
 
     full = [
         ("architect", [
-            {"cmd": f"foreman spawn architect {task_id}", "then": "task; then handoff"},
-            {"cmd": f"foreman handoff {task_id} architect", "stdin": "sub-agent output"}]),
+            {"cmd": f"foreman spawn architect {task_id} --self-handoff", "then": "Task tool agent=architect"},
+            {"cmd": f"# confirm .foreman/handoffs/{task_id}.architect.json (self-handoff) or: handoff {task_id} architect"}]),
         ("qa_lead", [
-            {"cmd": f"foreman spawn qa_lead {task_id}", "then": "task; then handoff"},
-            {"cmd": f"foreman handoff {task_id} qa_lead", "stdin": "sub-agent output"}]),
+            {"cmd": f"foreman spawn qa_lead {task_id} --self-handoff", "then": "Task tool agent=qa_lead"},
+            {"cmd": f"# confirm handoff {task_id}.qa_lead.json"}]),
         ("developer", [
-            {"cmd": f"foreman spawn developer {task_id} --load-from architect", "then": "task; then handoff"},
-            {"cmd": f"foreman handoff {task_id} developer", "stdin": "sub-agent output"}]),
+            {"cmd": f"foreman spawn developer {task_id} --load-from architect --self-handoff", "then": "Task tool agent=developer"},
+            {"cmd": f"# confirm handoff {task_id}.developer.json"}]),
         ("tester", [
-            {"cmd": f"foreman spawn tester {task_id} --load-from qa_lead", "then": "task; then handoff"},
-            {"cmd": f"foreman handoff {task_id} tester", "stdin": "sub-agent output"}]),
+            {"cmd": f"foreman spawn tester {task_id} --load-from qa_lead --self-handoff", "then": "Task tool agent=tester"},
+            {"cmd": f"# confirm handoff {task_id}.tester.json"}]),
     ]
 
     seq, step, skipped = [], 1, []
@@ -322,18 +329,20 @@ if "--auto" in sys.argv:
                 "branches": {
                     "PASS": [f"foreman verify --task-id {task_id}",
                              f"foreman spawn reviewer {task_id}",
-                             f"foreman handoff {task_id} reviewer  <<< $REV_OUT",
+                             f"# Task tool agent=reviewer (NO self-handoff)",
+                             f"printf '%s\\n' \"$REV\" | foreman handoff {task_id} reviewer",
                              f"if APPROVED: foreman commit --task-id {task_id} --desc \"...\"",
                              f"                foreman state done {task_id}",
                              f"                (optional) foreman deploy list  →  ask user  →  foreman deploy install --device <id>",
-                             f"if CHANGES_REQUIRED: foreman spawn refactorer {task_id} --load-from reviewer",
+                             f"if CHANGES_REQUIRED: foreman spawn refactorer {task_id} --load-from reviewer --self-handoff",
                              f"                     then re-run validate"],
-                    "FAIL": [f"foreman spawn debugger {task_id} --error \"$OUT\"  (retry ≤3)",
+                    "FAIL": [f"foreman spawn debugger {task_id} --error \"$OUT\" --self-handoff  (retry ≤3)",
                              f"foreman rollback && foreman state fail {task_id}  (if 3 fails)"]}})
     _out({"ok": True, "task": task_id, "status": st,
           "task_desc": state[task_id].get("description",""),
           "acceptance": state[task_id].get("acceptance",""),
-          "already_done": skipped, "sequence": seq})
+          "already_done": skipped, "sequence": seq,
+          "note": "PLAN ONLY — does not execute. Autonomous: foreman run  |  TUI: opencode --agent foreman /ship"})
 
 # ---- Batch (parallel-safe ready tasks) ----
 if "--batch" in sys.argv:
@@ -394,8 +403,24 @@ if "--dag" in sys.argv:
     _out({"ok": True, "mermaid": "\n".join(lines)})
 
 # Default: summary
-_out({"ok": True, "total": len(state),
-      "done":    sum(1 for t in state.values() if _status(t)=="done"),
-      "pending": sum(1 for t in state.values() if _status(t)=="pending"),
-      "failed":  sum(1 for t in state.values() if _status(t)=="failed"),
-      "hint": "flags: --add --mark --pending --ready --blocked --all --dag --task --guide --auto --batch --import --template --resume --escalations --reset"})
+total = len(state)
+ready_n = sum(1 for t in state.values() if _status(t) == "pending" and _deps_done(t, state))
+done_n = sum(1 for t in state.values() if _status(t) == "done")
+pending_n = sum(1 for t in state.values() if _status(t) == "pending")
+failed_n = sum(1 for t in state.values() if _status(t) == "failed")
+if total == 0:
+    hint = ("Task DAG empty. Seed: foreman state template todo|chat|blog  "
+            "OR product_owner → state import. Autonomous: foreman run")
+elif ready_n:
+    first = next(k for k, t in sorted(state.items())
+                 if _status(t) == "pending" and _deps_done(t, state))
+    hint = (f"{ready_n} ready. Next: foreman state guide {first}  "
+            f"|  Autonomous: foreman run  |  Plan only: foreman state auto {first}")
+elif pending_n:
+    hint = "Tasks pending but blocked on deps. See: foreman state blocked"
+elif done_n == total:
+    hint = "All tasks done. Optional: foreman deploy list"
+else:
+    hint = "foreman state all | resume | escalations"
+_out({"ok": True, "total": total, "done": done_n, "pending": pending_n,
+      "failed": failed_n, "ready": ready_n, "hint": hint})
