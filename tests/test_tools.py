@@ -240,6 +240,91 @@ def test_wrapper_log():
 def test_wrapper_help():
     r = wrap("help")
     assert r[0] == 0 and "spawn" in r[1] and "state" in r[1]
+    assert "run" in r[1] and "AUTONOMOUS" in r[1]
+
+
+def test_wrapper_state_auto_requires_id():
+    with tempfile.TemporaryDirectory() as t:
+        r = wrap("state", "auto", project=t)
+        assert r[0] == 2
+        d = js(r[1]); assert d["ok"] is False
+        assert "task-id" in d["message"].lower() or "requires" in d["message"].lower()
+        assert "foreman run" in d.get("note", "") or "foreman run" in d.get("hint", "")
+
+
+def test_wrapper_state_summary_empty_hint():
+    with tempfile.TemporaryDirectory() as t:
+        r = wrap("state", project=t)
+        assert r[0] == 0
+        d = js(r[1]); assert d["total"] == 0
+        assert "template" in d["hint"] or "foreman run" in d["hint"]
+
+
+def test_wrapper_next_how_to_run():
+    with tempfile.TemporaryDirectory() as t:
+        r = wrap("next", project=t)
+        assert r[0] == 0
+        d = js(r[1]); assert "how_to_run" in d
+        assert "foreman run" in d["how_to_run"]
+        assert "empty" in d["guidance"].lower() or "template" in d["guidance"].lower()
+
+
+def test_wrapper_run_dry_run():
+    with tempfile.TemporaryDirectory() as t:
+        # without agent install, run should fail helpfully
+        r = wrap("run", "--dry-run", project=t)
+        # either dry-run ok (if agent present somehow) or missing agent
+        d = js(r[1])
+        if r[0] != 0:
+            assert d["ok"] is False
+            assert "agent" in d["message"].lower() or "install" in d.get("hint", "").lower()
+        else:
+            assert d.get("dry_run") is True
+            assert d["agent"] == "foreman"
+            assert "opencode" in d["would_run"][0] or d["would_run"][0].endswith("opencode")
+
+
+def test_wrapper_unknown_command_json():
+    r = wrap("spwan")  # typo
+    assert r[0] == 2
+    # may be on stderr
+    raw = r[1] or r[2]
+    assert "unknown" in raw.lower() or "foreman help" in raw
+
+
+def test_opencode_agents_present():
+    agent_dir = os.path.join(_ROOT, "opencode", "agent")
+    assert os.path.isfile(os.path.join(agent_dir, "foreman.md"))
+    for role in ("product_owner", "architect", "qa_lead", "developer",
+                 "tester", "reviewer", "refactorer", "debugger"):
+        assert os.path.isfile(os.path.join(agent_dir, f"{role}.md")), role
+    assert os.path.isfile(os.path.join(_ROOT, "opencode", "command", "ship.md"))
+    assert os.path.isfile(os.path.join(_ROOT, "opencode", "skill", "foreman", "SKILL.md"))
+
+
+def test_install_sh_links_agents():
+    with tempfile.TemporaryDirectory() as t:
+        rc, out, err = run([os.path.join(_ROOT, "install.sh"), t], timeout=15)
+        assert rc == 0, err or out
+        assert os.path.islink(os.path.join(t, ".opencode", "agent", "foreman.md")) or \
+               os.path.exists(os.path.join(t, ".opencode", "agent", "foreman.md"))
+        assert os.path.exists(os.path.join(t, ".opencode", "command", "ship.md"))
+        # dry-run should work after install
+        r = wrap("run", "--dry-run", project=t)
+        d = js(r[1]); assert d["ok"] and d["dry_run"]
+        assert "--agent" in d["would_run"] and "foreman" in d["would_run"]
+
+
+def test_install_sh_global_only():
+    rc, out, err = run([os.path.join(_ROOT, "install.sh"), "--global-only"], timeout=15)
+    assert rc == 0, err or out
+    g = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+                     "opencode", "agent", "foreman.md")
+    assert os.path.exists(g) or os.path.islink(g)
+    # project without local .opencode still ok via global agent
+    with tempfile.TemporaryDirectory() as t:
+        r = wrap("run", "--dry-run", project=t)
+        d = js(r[1]); assert d["ok"] and d["dry_run"]
 
 
 # ── Dry-run tests ─────────────────────────────────────────────────────────
@@ -932,6 +1017,14 @@ if __name__ == "__main__":
         ("wrapper state guide", test_wrapper_state_guide),
         ("wrapper log", test_wrapper_log),
         ("wrapper help", test_wrapper_help),
+        ("wrapper state auto requires id", test_wrapper_state_auto_requires_id),
+        ("wrapper state empty hint", test_wrapper_state_summary_empty_hint),
+        ("wrapper next how_to_run", test_wrapper_next_how_to_run),
+        ("wrapper run --dry-run", test_wrapper_run_dry_run),
+        ("wrapper unknown command json", test_wrapper_unknown_command_json),
+        ("opencode agents present", test_opencode_agents_present),
+        ("install.sh links agents", test_install_sh_links_agents),
+        ("install.sh global only", test_install_sh_global_only),
         ("validate --dry-run", test_validate_dry_run),
         ("rollback --dry-run", test_rollback_dry_run),
         ("commit --dry-run", test_commit_dry_run),
