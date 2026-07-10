@@ -8,6 +8,7 @@ Ship this project with Foreman. Work autonomously until the task DAG is empty or
 Project root is the current workspace. Follow your system instructions exactly.
 
 Startup checklist:
+0. `export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"` (OpenCode often lacks ~/.local/bin)
 1. `foreman doctor` — fix critical failures first
 2. `foreman next` — see brief + ready tasks
 3. If no tasks: seed via `foreman state template todo` (or product_owner → import from PRD)

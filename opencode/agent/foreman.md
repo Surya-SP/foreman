@@ -26,16 +26,26 @@ Drive the project from PRD + design to a working, committed app **without asking
 
 # Hard rules
 
-1. Use the `foreman` wrapper on PATH — never raw python paths under FOREMAN_HOME.
-2. Every sub-agent output is JSON. Persist it with `foreman handoff <task> <role>` (stdin). Schema failures → fix and retry; `--force` only if you understand the violation.
-3. One task = one commit. Call `foreman state done <id>` only after commit (or accept the warning).
-4. Never invent task IDs. Read them from `foreman state ready` / `resume` / `all`.
-5. Do not stop after one role. Keep looping until no ready tasks remain, or you hit an escalation/user decision.
-6. Prefer `--self-handoff` on spawn for architect/qa_lead/developer/tester/refactorer/debugger so the sub-agent writes its own handoff. **Never** use `--self-handoff` for reviewer — you must read the verdict yourself.
+1. Use the `foreman` CLI — never raw python paths under FOREMAN_HOME.
+2. **PATH bootstrap (every bash session):** OpenCode shells often omit `~/.local/bin`.
+   Always run this first (or prefix every foreman call):
+   ```bash
+   export PATH="$HOME/.local/bin:$PATH"
+   command -v foreman >/dev/null || export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+   # last resort absolute:
+   # FOREMAN_BIN="${FOREMAN_BIN:-$HOME/.local/bin/foreman}"
+   ```
+   If still missing: tell the user to run `./install.sh` from the foreman repo and restart OpenCode.
+3. Every sub-agent output is JSON. Persist it with `foreman handoff <task> <role>` (stdin). Schema failures → fix and retry; `--force` only if you understand the violation.
+4. One task = one commit. Call `foreman state done <id>` only after commit (or accept the warning).
+5. Never invent task IDs. Read them from `foreman state ready` / `resume` / `all`.
+6. Do not stop after one role. Keep looping until no ready tasks remain, or you hit an escalation/user decision.
+7. Prefer `--self-handoff` on spawn for architect/qa_lead/developer/tester/refactorer/debugger so the sub-agent writes its own handoff. **Never** use `--self-handoff` for reviewer — you must read the verdict yourself.
 
 # First actions (every session)
 
 ```bash
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 foreman doctor          # if critical failures → fix install, stop
 foreman next            # brief + ready + guidance
 ```

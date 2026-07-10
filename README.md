@@ -22,13 +22,13 @@ until every task is done.
 ```
 
 **No hand-written tickets. No MCP server.** Bash tools + role prompts + an
-OpenCode agent that actually runs the loop.
+OpenCode agent that drives the loop.
 
 ---
 
 ## Quick start (autonomous)
 
-Prerequisites: Python 3.11+, Flutter SDK, [OpenCode](https://opencode.ai), git.
+Prerequisites: **Python 3.11+**, Flutter SDK, [OpenCode](https://opencode.ai), git.
 
 ### 1. Install Foreman once (global)
 
@@ -36,13 +36,20 @@ Prerequisites: Python 3.11+, Flutter SDK, [OpenCode](https://opencode.ai), git.
 git clone https://github.com/Surya-SP/foreman
 cd foreman
 ./install.sh                          # once — all projects
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"  # for interactive shells
 ```
+
+`install.sh` also links `foreman` into `/opt/homebrew/bin` or `/usr/local/bin`
+when those directories exist and are writable (helps OpenCode GUI shells that
+do not load your zshrc).
+
+**Restart OpenCode** after install so it reloads agents under
+`~/.config/opencode/`.
 
 ### 2. Create a Flutter project first
 
-Foreman does **not** create the Flutter app. You must have a real project
-(with `pubspec.yaml`) before `foreman init` / `foreman run`.
+Foreman does **not** create the Flutter app. You need a real project
+(`pubspec.yaml`) before `foreman init` / `foreman run`.
 
 ```bash
 # new app
@@ -56,35 +63,52 @@ cd /path/to/your/flutter/project
 ### 3. Seed specs, then ship
 
 ```bash
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 foreman doctor                        # sanity-check install
-foreman init                          # seeds tasks/prd.md + design.md (+ git/pub get)
+foreman init                          # seeds tasks/prd.md + design.md if missing;
+                                      # runs flutter pub get; git init if needed
 # edit tasks/prd.md and tasks/design.md  ← your only real job
 
-foreman run --template todo           # autonomous ship (archetype DAG)
-# or, without a template (product_owner decomposes your PRD):
+foreman run --template todo           # seed todo DAG + launch agent
+# or, without a template (agent may seed via product_owner from your PRD):
 # foreman run
 ```
 
 **You do not re-install per project.** Global install puts the `foreman`
-agent + `/ship` in `~/.config/opencode/`. Each project only needs a Flutter
-app root, `tasks/prd.md` + `tasks/design.md`, and (auto-created) `.foreman/`
-state.
+agent, role subagents, `/ship`, and skill in `~/.config/opencode/`, plus the
+CLI on PATH. Each app only needs a Flutter root, `tasks/prd.md` +
+`tasks/design.md`, and (auto-created) `.foreman/` runtime state.
 
 ### Same thing in the OpenCode TUI
 
 ```bash
 cd /path/to/your/flutter/project
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 opencode --agent foreman
 # Tab-select "foreman" if needed, then:
 /ship
 # or type: ship the app from the PRD
 ```
 
+If bash reports `command not found: foreman` inside OpenCode, the shell PATH
+is missing the install location. In that session run:
+
+```bash
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+```
+
+(The foreman agent is instructed to do this automatically.)
+
 `foreman run` is a thin launcher for:
 
 ```bash
-opencode run --agent foreman --auto --dir <project> "Ship this project…"
+opencode run --agent foreman --auto --dir <project> --title foreman-ship \
+  "Ship this project with Foreman…"
 ```
+
+Flags: `--template todo|chat|blog`, `--message "…"`, `--model provider/model`,
+`--dry-run`, `--no-auto` (skip OpenCode’s auto-approve).
 
 ---
 
@@ -106,68 +130,78 @@ hex colours, spacing) = fewer round-trips.
 
 | You do | Foreman agent does |
 |--------|--------------------|
-| Write PRD + design | Seed task DAG (template or product_owner) |
+| Write PRD + design | Seed task DAG (`state template` or product_owner → import) |
 | `foreman run` or `/ship` | For each ready task: architect → qa_lead → developer → tester → validate → reviewer → commit → done |
-| Pick deploy device (optional) | Debug loop ≤3, refactorer on CHANGES_REQUIRED |
-| Resolve escalations | Resume from `.foreman/` after interrupt |
+| Pick deploy device (optional) | Debug loop (agent policy ≤3), refactorer on CHANGES_REQUIRED |
+| Resolve escalations / model stalls | Resume from `.foreman/` after interrupt |
 
 **Not autonomous by itself:** typing `foreman spawn` / `state auto` in your
-shell. Those are low-level tools. `state auto` **prints a plan**; it does not
-call an LLM.
+shell. Those are low-level tools. `state auto <id>` **prints a plan**; it does
+not call an LLM.
+
+Autonomy depends on OpenCode + a capable model following the agent prompt.
+There is no separate forever-running Python daemon. Weak or free models may
+stop mid-loop; continue with another `/ship` or `foreman run`.
 
 ---
 
 ## Install details
 
 ```bash
-./install.sh                 # recommended: once, for every project
-./install.sh /path/to/proj   # optional: also link agents into that project
+./install.sh                 # recommended: once, global
+./install.sh --global-only   # same, explicit
+./install.sh /path/to/proj   # global + optional project-local .opencode links
 ```
 
 Global (always):
 
 ```
 ~/.local/bin/foreman
-~/.config/opencode/agent/foreman.md + role agents
+# also, when writable:
+#   /opt/homebrew/bin/foreman  or  /usr/local/bin/foreman
+~/.config/opencode/agent/foreman.md + 8 role agents
 ~/.config/opencode/command/ship.md
-~/.config/opencode/skill/foreman/
+~/.config/opencode/skill/foreman/SKILL.md
 ```
 
-Per project (automatic / manual):
+Per project:
 
 ```
-project/tasks/prd.md, design.md     ← you write these
-project/.foreman/                   ← created on first foreman command
+project/tasks/prd.md, design.md     ← you write (init can seed skeletons)
+project/.foreman/                   ← auto-created; do not commit
 ```
 
 ```bash
 echo ".foreman/" >> .gitignore
 ```
 
+`.foreman/` is **runtime state only** (task DAG, handoffs, audit log). It is
+not part of the Foreman source tree and is gitignored there.
+
 ---
 
 ## Pipeline for one task
 
 What the **foreman** agent is instructed to run (also what
-`foreman state auto <task>` prints). `state guide` is a shorter
-hint and may skip optional roles.
+`foreman state auto <task>` prints). `state guide <task>` is a shorter hint
+and may skip optional roles (e.g. qa_lead / tester).
 
 ```
-spawn architect  → Task(architect) → handoff
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+spawn architect  → Task(architect) → handoff   (prefer --self-handoff)
 spawn qa_lead    → Task(qa_lead)   → handoff
 spawn developer  → Task(developer) → handoff   (writes code)
 spawn tester     → Task(tester)    → handoff
 foreman validate
-   ├── PASS → verify → spawn reviewer → handoff
+   ├── PASS → verify → spawn reviewer → handoff  (no self-handoff; Tech Lead reads verdict)
    │          APPROVED  → commit + state done
    │          CHANGES_REQUIRED → refactorer → re-validate
-   │          REJECT → escalate / fail
-   └── FAIL → debugger (agent policy: ≤3 attempts) else rollback + state fail
+   │          REJECT → escalate / state fail
+   └── FAIL → debugger (agent policy: ≤3) else rollback + state fail
 ```
 
-The agent keeps looping ready tasks until the DAG is empty or blocked.
-There is no separate Python “run forever” daemon — autonomy is the
-OpenCode agent following that loop via the CLI tools.
+Then `foreman state resume` / `state ready` for the next task until none remain.
 
 ---
 
@@ -179,8 +213,8 @@ Autonomous
               [--model provider/model] [--dry-run] [--no-auto]
 
 Inspection
-  foreman info [--brief|--summary|--filter PATH|--since REF]
-  foreman plan [--section NAME]
+  foreman info [--brief|--summary|--filter PATH|--since REF|--lines N]
+  foreman plan [--section NAME|--lines N|--no-cache]
   foreman next
   foreman doctor
   foreman debt [--path lib/]
@@ -189,7 +223,7 @@ Inspection
 Task DAG  (.foreman/tasks.json)
   foreman state pending|ready|blocked|all|dag|reset
   foreman state add <id> "<desc>" [--deps a,b] [--acceptance "..."]
-  foreman state import                       # bulk from stdin
+  foreman state import                       # stdin: {"tasks":[...]} or [...]
   foreman state template <todo|chat|blog>
   foreman state done <id> [--force]
   foreman state fail <id> [error]
@@ -201,48 +235,66 @@ Task DAG  (.foreman/tasks.json)
   foreman state escalations
 
 Sub-agents (used by the foreman agent)
-  foreman spawn <role> <task_id> [--load-from <role>] [--error ...]
+  foreman spawn <role> [task_id] [--load-from <role>] [--error ...]
                                  [--self-handoff] [--estimate-tokens]
+      # roles: product_owner architect qa_lead developer tester
+      #        reviewer refactorer debugger
+      # product_owner may omit task_id; spawn only prints a prompt
   foreman handoff <task_id> <role>           # stdin: raw output
 
 Build gates
   foreman validate [--lines N|--dry-run|--coverage|--min-coverage PCT]
-                   # validate = pub get → dart fix → format → analyze → test
-  foreman verify   [--task-id ID|--strict|--ast|--ast-only]
+                   # pub get → dart fix → format → analyze → test
+                   # default --min-coverage is 0 (only enforced if set)
+  foreman verify   [--task-id ID|--files ...|--strict|--ast|--ast-only]
 
 Git
   foreman init
   foreman branch <name>
   foreman commit --task-id t3 --desc "..." [--branch feat/t3] [--dry-run]
   foreman rollback [--dry-run]
-  foreman pr "<title>" ["<body>"]
+  foreman pr "<title>" ["<body>"]            # requires gh CLI
 
 Deploy
   foreman deploy list [--platform ios|android|macos|web|linux|windows]
   foreman deploy install --device <id> [--mode debug|profile|release]
+  foreman deploy install --platform ios      # first matching device
 ```
 
-`foreman help` prints the live command list (same surface area).
+`foreman help` prints the live command list.
 
 ---
 
 ## Manual / low-level use
 
-If you are not using `foreman run`, an OpenCode session with the foreman
+If you are not using `foreman run`, an OpenCode session with the **foreman**
 agent (or any agent following the skill) must still:
 
-1. `foreman spawn <role> …` → get `prompt`
-2. Invoke OpenCode **Task** with the matching role agent + that prompt
-3. `foreman handoff <task> <role>` with the JSON (or use `--self-handoff`)
+1. Ensure PATH includes the CLI (see above)
+2. `foreman spawn <role> …` → JSON with `prompt`
+3. OpenCode **Task** tool with the matching role agent + that prompt
+4. `foreman handoff <task> <role>` with the JSON (or use `--self-handoff`)
 
 Example seed from an archetype:
 
 ```bash
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+cd /path/to/flutter/app
 foreman init
 foreman state template todo
-foreman state resume          # → scaffold
-foreman state guide scaffold  # next commands
+foreman state resume          # e.g. scaffold
+foreman state guide scaffold  # next commands (advice only)
 # …or just: foreman run
+```
+
+Custom PRD path:
+
+```bash
+foreman spawn product_owner --self-handoff
+# Task agent=product_owner with spawn.prompt
+# then import tasks:
+#   cat .foreman/handoffs/<id>.product_owner.json | foreman state import
+# or pipe the JSON:  printf '%s\n' "$PO_JSON" | foreman state import
 ```
 
 ---
@@ -261,7 +313,11 @@ foreman state guide scaffold  # next commands
 | **debugger** | Fixes validate failures | `role`, `root_cause`, `fix` |
 
 Extra keys (e.g. `decisions`, `escalate_to`, `coverage_target`) are allowed.
-Reviewer verdicts: `APPROVED` · `CHANGES_REQUIRED` · `REJECT`.
+Reviewer verdicts expected by the agent: `APPROVED` · `CHANGES_REQUIRED` ·
+`REJECT`.
+
+OpenCode agent files live in `opencode/agent/`; spawn prompt templates in
+`prompts/roles/` (developer uses `implementer.txt`).
 
 ---
 
@@ -277,20 +333,22 @@ Handoffs mirror into `.foreman/tasks.json`:
 | debugger | `attempts`++ |
 | commit | `commit_sha`, `branch` |
 
+Also: `log.jsonl` (audit), `handoffs/*.json`, optional `.plan_cache.json`.
+
 ---
 
 ## Safety rails
 
 `foreman state done <id>` refuses if:
 
-- Tester handoff exists and `all_pass: false`
+- Tester handoff exists and `all_pass` is `false`
 - Reviewer handoff exists and verdict is `REJECT` or `CHANGES_REQUIRED`
 
-Missing `commit_sha` → warning only. Bypass checks with
-`foreman state done <id> --force` (normal audit log entry only).
+Missing `commit_sha` → warning only. Bypass with
+`foreman state done <id> --force`.
 
 `foreman handoff` refuses schema-invalid JSON unless `--force`, which is
-recorded in `.foreman/handoffs/.forced.jsonl` and surfaced by `state guide`.
+appended to `.foreman/handoffs/.forced.jsonl` and warned by `state guide`.
 
 ---
 
@@ -332,15 +390,16 @@ A single-page Flutter app that greets the user with a calm welcome screen.
 - Flutter SDK only, no routing, no backend
 ```
 
-Then (inside an existing Flutter app):
+Then:
 
 ```bash
-# flutter create welcome_card && cd welcome_card   # if starting fresh
+flutter create welcome_card && cd welcome_card
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 foreman init
-# paste/edit prd + design
+# paste/edit tasks/prd.md + tasks/design.md
 foreman run --template todo
 # or let product_owner decompose the PRD:
-foreman run
+# foreman run
 ```
 
 ---
@@ -348,15 +407,19 @@ foreman run
 ## Resume after interrupt
 
 ```bash
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 foreman state resume
 foreman state task <id>      # handoffs, verdict, attempts
 foreman log --task <id>
 foreman run                  # agent continues from missing handoffs
+# or in TUI: opencode --agent foreman → /ship
 ```
 
 ---
 
 ## Testing Foreman itself
+
+From the foreman source repo:
 
 ```bash
 python3 tests/test_tools.py
@@ -388,26 +451,33 @@ tests/test_tools.py
 
 **Q: Do I create the Flutter project or does Foreman?**  
 You create it: `flutter create my_app && cd my_app`, then `foreman init`.
-Foreman never runs `flutter create` for you.
+Foreman never runs `flutter create` for you. `init` errors if `pubspec.yaml`
+is missing.
 
 **Q: Where do PRD and design go?**  
-`tasks/prd.md` and `tasks/design.md` (seeded by `foreman init`).
+`tasks/prd.md` and `tasks/design.md` (seeded by `foreman init` if absent).
+
+**Q: `command not found: foreman` in OpenCode?**  
+OpenCode’s bash often omits `~/.local/bin`. Run
+`export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"`,
+or re-run `./install.sh` (links into Homebrew/local bin when possible), then
+restart OpenCode.
 
 **Q: Why did `foreman state auto` do nothing?**  
-It only prints the remaining command sequence. Use `foreman run`.
+It only prints the remaining command sequence. Use `foreman run` or `/ship`.
 
 **Q: Why did `foreman spawn product_owner` only print a prompt?**  
-Spawn fills a role prompt. The OpenCode Task tool (or foreman agent) runs
-the LLM. Handoff + `state import` load the tasks.
+Spawn fills a role prompt. The OpenCode Task tool (or foreman agent) runs the
+LLM. Then `state import` loads `tasks[]` into the DAG.
 
 **Q: Why not MCP?**  
 Bash + JSON is simpler and debuggable. Works with any agent that has bash.
 
 **Q: Can this run without a human?**  
-Mostly: `foreman run` / `/ship` uses `opencode run --auto`. You still need
-a working OpenCode model/provider, and the agent may stop for deploy
-device choice, escalations, or missing PRD/design. Autonomy is the agent
-loop, not a separate forever-running service.
+Mostly: `foreman run` / `/ship` with `--auto`. You still need a working
+OpenCode model/provider. The agent may stop for deploy device choice,
+escalations, missing PRD/design, or model limits — resume with another
+`/ship` or `foreman run`.
 
 **Q: Sub-agent returns garbage?**  
 `handoff` rejects invalid schema. Fix and retry, or `--force` (logged to
@@ -415,11 +485,15 @@ loop, not a separate forever-running service.
 
 **Q: Task fails repeatedly?**  
 Agent policy is debugger ≤3, then `rollback` + `state fail` and move on.
-That limit is in the agent instructions, not hard-enforced by the CLI.
+That limit is in agent instructions, not hard-enforced by the CLI.
 
 **Q: Non-Flutter?**  
-`project_info` detects other stacks; prompts/templates are Flutter-flavoured.
-Extend templates and `validator.py`.
+`project_info` detects flutter / python / node / rust / go. Role prompts,
+templates, and `validate` are Flutter-oriented. Extend templates and
+`validator.py` for other stacks.
+
+**Q: Is `.foreman/` needed in the Foreman git repo?**  
+No. It is per-app runtime state only; gitignored; safe to delete.
 
 ---
 

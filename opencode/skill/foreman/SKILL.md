@@ -7,6 +7,11 @@ description: Use when shipping a Flutter app from tasks/prd.md and tasks/design.
 
 You are driving the **Foreman** pipeline. Prefer the **foreman** primary agent when available (Tab to switch, or `/ship`). Use the `foreman` CLI — never raw python tool paths.
 
+**PATH:** OpenCode bash often lacks `~/.local/bin`. First command every session:
+```bash
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+```
+
 ## One-line model
 
 ```
