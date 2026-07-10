@@ -52,6 +52,14 @@ echo "Installing globally → $GLOBAL_OC"
 mkdir -p "$HOME/.local/bin"
 ln -sfn "$FOREMAN_HOME/bin/foreman" "$HOME/.local/bin/foreman"
 
+# Also link into common PATH dirs used by GUI apps / OpenCode (best-effort).
+for bin_dir in /opt/homebrew/bin /usr/local/bin; do
+  if [ -d "$bin_dir" ] && [ -w "$bin_dir" ]; then
+    ln -sfn "$FOREMAN_HOME/bin/foreman" "$bin_dir/foreman"
+    echo "  also:  $bin_dir/foreman"
+  fi
+done
+
 # ── Global OpenCode agents / command / skill ────────────────────────────────
 mkdir -p "$GLOBAL_OC/agent" "$GLOBAL_OC/command" "$GLOBAL_OC/skill/foreman"
 
