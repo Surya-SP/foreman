@@ -1,0 +1,53 @@
+# Known limits
+
+Honest operational constraints. Read before production use.
+
+## What Foreman guarantees
+
+- Durable task DAG + handoffs under `.foreman/`
+- Product gate (`ready`) and design gate (`design approve`) before implement
+- Python-driven loop of `opencode run --agent <role>` per planned role
+- Safety rails: primary `edit: deny`, commit required for done, scoped rollback, secret heuristics
+
+## What Foreman does **not** guarantee
+
+- Correct or beautiful UI without a capable model + human design approval
+- That role agents always emit valid JSON (retries help; not perfect)
+- Cost or latency (one OpenCode process per role is expensive)
+- Secret-free repos beyond path/content heuristics
+- Live ship success — CI uses `--mock` (no real OpenCode / flutter validate)
+
+## Cost / latency
+
+| Factor | Impact |
+|--------|--------|
+| Roles per task | Smart plan reduces roles; complex tasks still run many |
+| Cold `opencode run` per role | High wall-clock and $ |
+| Handoff retries | Extra role sessions on miss |
+| Designer | Extra session before ship |
+
+Prefer strong models for ship; weak models thrash retries.
+
+## Modes
+
+| Mode | When |
+|------|------|
+| `foreman run` (default execute) | Autonomous after gates |
+| `foreman run --agent-loop` | Freeform tech-lead TUI-style session |
+| `opencode --agent foreman` + `/ship` | Interactive TUI |
+| `foreman execute --mock` | CI / plumbing only |
+
+## Handoff failures
+
+Check: `foreman metrics` → `handoff_success_rate`, `handoff_miss`.
+
+Common causes: model prose without JSON, wrong role agent install, PATH missing `foreman` inside OpenCode.
+
+## Design language
+
+- Enforcement is **prompt STRICT + mechanical hex check** (verify / executor), not a full visual compiler.
+- Humans must still review `foreman design show` before approve.
+
+## Field proof
+
+After a real ship, fill [FIELD_REPORT.md](FIELD_REPORT.md). Without it, reliability claims are unproven.

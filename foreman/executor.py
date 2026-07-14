@@ -110,15 +110,28 @@ def _opencode_role(
         return 1, str(e)
 
 
+def _mem_dir(project: str) -> str:
+    return os.path.join(os.path.abspath(project), ".foreman")
+
+
 def _persist_handoff(home: str, project: str, task_id: str, role: str, text: str) -> tuple[bool, dict]:
+    from foreman.log import metric
     if _handoff_exists(project, task_id, role):
+        metric(_mem_dir(project), "handoff_self", role=role, task_id=task_id)
         return True, {"ok": True, "already": True}
     obj = _extract_json_from_text(text)
     if not obj:
+        metric(_mem_dir(project), "handoff_miss", role=role, task_id=task_id, reason="no_json")
         return False, {"ok": False, "message": "no JSON in opencode output"}
     raw = json.dumps(obj)
     rc, data = _run_json(home, project, "handoff.py", "--task-id", task_id, "--role", role, "--stdin", stdin=raw)
-    return rc == 0 and data.get("ok", True), data
+    ok = rc == 0 and data.get("ok", True)
+    metric(
+        _mem_dir(project),
+        "handoff_ok" if ok else "handoff_miss",
+        role=role, task_id=task_id, reason="schema" if not ok else "parse",
+    )
+    return ok, data
 
 
 def _run_role_with_retry(
@@ -132,7 +145,8 @@ def _run_role_with_retry(
     auto: bool,
     dry: bool,
 ) -> tuple[bool, dict, list[dict]]:
-    """OpenCode role session + handoff; retry once with JSON-only re-prompt."""
+    """OpenCode role session + handoff; retry with JSON-only re-prompt."""
+    from foreman.log import metric
     log: list[dict] = []
     for attempt in range(1, HANDOFF_RETRIES + 2):
         p = prompt
@@ -142,16 +156,19 @@ def _run_role_with_retry(
                 + "\n\n## RETRY: previous output had no valid handoff JSON.\n"
                 "Reply with ONLY one JSON object matching the role schema. No prose.\n"
             )
+            metric(_mem_dir(project), "handoff_retry", role=role, task_id=task_id, attempt=attempt)
         code, out = _opencode_role(project, role, p, model=model, auto=auto, dry=dry)
         log.append({"attempt": attempt, "exit": code})
         if dry:
             return True, {"dry": True}, log
         if _handoff_exists(project, task_id, role):
+            metric(_mem_dir(project), "handoff_self", role=role, task_id=task_id)
             return True, {"ok": True, "self_handoff": True}, log
         ok_h, hdata = _persist_handoff(home, project, task_id, role, out)
         if ok_h:
             return True, hdata, log
         log.append({"attempt": attempt, "handoff": hdata})
+    metric(_mem_dir(project), "handoff_miss", role=role, task_id=task_id, reason="exhausted_retries")
     return False, {"ok": False, "message": "handoff missing after retries"}, log
 
 
@@ -191,14 +208,43 @@ def run_designer_phase(
     if mock:
         obj = {
             "role": "designer",
-            "summary": "Mock design system for CI",
-            "mockups": [{"screen": "HomeScreen", "wireframe": "AppBar\nList\nFAB", "notes": "mock"}],
+            "summary": "Calm utility system for CI mock",
+            "personality": "calm utility",
+            "platforms": ["ios", "android"],
+            "mockups": [{
+                "screen": "HomeScreen",
+                "goal": "See items",
+                "primary_cta": "Add",
+                "wireframe": "AppBar\nList\nFAB",
+                "notes": "single primary FAB",
+            }],
             "design_language_md": (
-                "# Design Language\n\n## Tokens\n- Primary: #2196F3\n\n"
-                "## Typography\n- Body: 14sp\n\n## Components\n- Material 3\n\n"
-                "## Layout\n- 8dp grid\n\n## States\n- empty/loading/error\n\n"
-                "## Accessibility\n- 48dp targets\n\n## Do / Don't\n- Do follow tokens\n"
+                "# Design Language — CI\n\n## 1. Personality & principles\nCalm utility\n\n"
+                "## 2. Color\n- Primary: #2196F3\n- On primary: #FFFFFF\n- Surface: #FFFBFE\n"
+                "- On surface: #1C1B1F\n- Error: #B3261E\n\n"
+                "## 3. Typography\nM3 type scale\n\n## 4. Space & layout\n8dp grid\n\n"
+                "## 5. Shape & elevation\n12dp cards\n\n## 6. Components\nMaterial 3\n\n"
+                "## 7. Navigation\nBottom bar if multi-section\n\n## 8. Motion\nShort fades\n\n"
+                "## 9. Content & empty/loading/error\nRequired\n\n## 10. Accessibility\n48dp\n\n"
+                "## 11. Do / Don't\nNo purple gradient slop\n\n## 12. Screen specs\nHomeScreen\n"
             ),
+            "token_index": {
+                "primary": "#2196F3",
+                "on_primary": "#FFFFFF",
+                "primary_container": "#BBDEFB",
+                "surface": "#FFFBFE",
+                "on_surface": "#1C1B1F",
+                "error": "#B3261E",
+                "outline": "#79747E",
+            },
+            "anti_slop_checklist": {
+                "no_generic_purple_gradient": True,
+                "single_primary_cta_per_screen": True,
+                "semantic_color_roles": True,
+                "contrast_aa_text": True,
+                "empty_loading_error_defined": True,
+                "min_touch_48": True,
+            },
             "open_questions": [],
             "status": "pending_review",
         }
@@ -302,9 +348,13 @@ def execute_task(
                 elif k == "fixes_applied":
                     obj[k] = []
                 elif k == "mockups":
-                    obj[k] = [{"screen": "Home", "wireframe": "x", "notes": ""}]
+                    obj[k] = [{"screen": "Home", "wireframe": "x", "notes": "", "goal": "x", "primary_cta": "Go"}]
                 elif k == "design_language_md":
                     obj[k] = "# Design Language\n## Tokens\n- Primary: #2196F3\n"
+                elif k == "token_index":
+                    obj[k] = {"primary": "#2196F3", "on_primary": "#FFFFFF", "surface": "#FFFBFE",
+                              "on_surface": "#1C1B1F", "error": "#B3261E", "outline": "#79747E",
+                              "primary_container": "#BBDEFB"}
                 elif k == "status":
                     obj[k] = "pending_review"
                 elif k in ("root_cause", "fix", "approach", "test_strategy"):
@@ -399,6 +449,21 @@ def execute_task(
             _run_json(home, project, "state.py", "--mark", task_id, "--status", "failed", "--error", "reviewer REJECT")
             return {"ok": False, "task_id": task_id, "error": "rejected", "log": log}
 
+    # Mechanical design-language check (advisory unless findings)
+    try:
+        from foreman.design_check import check_design_language
+        files = None
+        sp = os.path.join(project, ".foreman", "tasks.json")
+        if os.path.exists(sp):
+            try:
+                files = json.load(open(sp)).get(task_id, {}).get("files")
+            except (json.JSONDecodeError, OSError):
+                files = None
+        dchk = check_design_language(project, files=files)
+        step("design_check", **{k: dchk.get(k) for k in ("ok", "skipped", "findings") if k in dchk})
+    except Exception as e:
+        step("design_check", ok=True, error=str(e))
+
     # commit + done
     desc = (plan.get("task_desc") or task_id)[:72]
     rc, cdata = _run_json(home, project, "commit.py", "--task-id", task_id, "--desc", desc)
@@ -472,20 +537,37 @@ def execute_project(
                 dg.approve(project)
                 dstat = dg.assess_design(project)
             elif not dstat.get("approved"):
+                preview = os.path.join(project, ".foreman", "design_preview.md")
                 return {
                     "ok": False,
                     "phase": "design",
-                    "message": "Design draft ready — human review required",
+                    "waiting_for": "design_approve",
+                    "message": "WAITING FOR: human design approval (mockups ready)",
                     "design": dstat,
                     "designer": dr,
+                    "preview_path": preview if os.path.exists(preview) else None,
+                    "next_commands": [
+                        "foreman design show",
+                        "foreman design approve",
+                        "foreman run",
+                    ],
                     "hint": "foreman design show  &&  foreman design approve  &&  foreman run",
                 }
         else:
+            preview = os.path.join(project, ".foreman", "design_preview.md")
             return {
                 "ok": False,
                 "phase": "design",
-                "message": "Design pending human approval",
+                "waiting_for": "design_approve",
+                "message": "WAITING FOR: human design approval",
                 "design": dstat,
+                "preview_path": preview if os.path.exists(preview) else None,
+                "language_path": dstat.get("language_path"),
+                "next_commands": [
+                    "foreman design show",
+                    "foreman design approve",
+                    "foreman run",
+                ],
                 "hint": "foreman design show  &&  foreman design approve  &&  foreman run",
             }
 

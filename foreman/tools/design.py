@@ -46,19 +46,30 @@ if "--show" in sys.argv:
     preview = os.path.join(target, ".foreman", "design_preview.md")
     lang = dg.design_language_text(target)
     text = ""
+    path_shown = None
     if os.path.exists(preview):
         text = open(preview, encoding="utf-8", errors="replace").read()
+        path_shown = preview
     elif lang:
         text = lang
+        path_shown = a.get("language_path")
     elif os.path.exists(a["handoff_path"]):
         try:
             h = json.load(open(a["handoff_path"]))
             text = h.get("design_language_md") or json.dumps(h.get("mockups"), indent=2)
+            path_shown = a["handoff_path"]
         except (OSError, json.JSONDecodeError):
             text = ""
-    if ui.is_pretty() or True:
-        print(text or "(no design preview yet — foreman design run)", file=sys.stderr)
-    _out({**a, "preview_chars": len(text)}, 0)
+    # Always print path first for humans
+    if path_shown:
+        print(f"\n── design file ──\n{path_shown}\n", file=sys.stderr)
+    print(text or "(no design preview yet — foreman design run)", file=sys.stderr)
+    # best-effort open in $EDITOR when --open
+    if "--open" in sys.argv and path_shown:
+        ed = os.environ.get("EDITOR") or os.environ.get("VISUAL")
+        if ed:
+            os.spawnlp(os.P_NOWAIT, ed, ed, path_shown)
+    _out({**a, "preview_chars": len(text), "path": path_shown}, 0)
 
 if "--approve" in sys.argv:
     r = dg.approve(target)

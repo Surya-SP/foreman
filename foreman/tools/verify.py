@@ -180,7 +180,20 @@ if ast_mode:
                 "message": f"[{d.get('code','')}] {d.get('message','')}",
             })
 
-critical = [f for f in all_findings if f["tag"] in CRITICAL_TAGS]
+# Mechanical design-language token check
+try:
+    from foreman.design_check import check_design_language
+    file_list = []
+    for s in scanned:
+        if s.get("exists") and s.get("path"):
+            file_list.append(s["path"])
+    dchk = check_design_language(target, files=file_list or None)
+    for f in dchk.get("findings") or []:
+        all_findings.append(f)
+except Exception:
+    dchk = {"skipped": True}
+
+critical = [f for f in all_findings if f["tag"] in CRITICAL_TAGS or f.get("tag") in ("design_token", "design_primary")]
 by_tag = {}
 for f in all_findings:
     by_tag[f["tag"]] = by_tag.get(f["tag"], 0) + 1
@@ -204,6 +217,7 @@ result = {
     "critical_findings": len(critical),
     "by_tag": by_tag,
     "findings": all_findings[:30],
+    "design_language_check": dchk,
     "ast_mode": ast_mode,
     "ast_diagnostics_count": len(ast_diagnostics) if ast_diagnostics is not None else 0,
     "hint": "advisory by default; pass --gate to fail on critical tags, --strict for all",

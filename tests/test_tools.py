@@ -474,6 +474,9 @@ def test_design_approve_gate():
             "summary": "Clean system",
             "mockups": [{"screen": "Home", "wireframe": "x", "notes": ""}],
             "design_language_md": "# Design Language\n\n## Tokens\n- Primary: #111111\n",
+            "token_index": {"primary": "#111111", "on_primary": "#FFFFFF", "surface": "#FFFBFE",
+                            "on_surface": "#1C1B1F", "error": "#B3261E", "outline": "#79747E",
+                            "primary_container": "#E0E0E0"},
             "status": "pending_review",
         }
         hd = os.path.join(t, ".foreman", "handoffs")
@@ -484,6 +487,45 @@ def test_design_approve_gate():
         r = dg.approve(t)
         assert r["ok"] and r["approved"]
         assert "Primary" in open(os.path.join(t, "tasks", "design_language.md")).read()
+
+
+def test_design_check_tokens():
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+    from foreman import design_gate as dg
+    from foreman.design_check import check_design_language
+    with tempfile.TemporaryDirectory() as t:
+        open(os.path.join(t, "pubspec.yaml"), "w").write("name: x\n")
+        os.makedirs(os.path.join(t, "lib"), exist_ok=True)
+        os.makedirs(os.path.join(t, "tasks"), exist_ok=True)
+        open(os.path.join(t, "tasks", "design_language.md"), "w").write(
+            "# DL\nPrimary: #2196F3\nOn surface: #1C1B1F\n"
+        )
+        dg.save_status(t, {"status": "approved", "approved": True})
+        open(os.path.join(t, "lib", "theme.dart"), "w").write(
+            "const c = Color(0xFF2196F3);\n"
+        )
+        r = check_design_language(t)
+        assert r.get("ok") is True
+        open(os.path.join(t, "lib", "theme.dart"), "w").write(
+            "const c = Color(0xFFFF00FF);\n"
+        )
+        r2 = check_design_language(t)
+        assert r2.get("ok") is False
+        assert r2.get("findings")
+
+
+def test_metrics_handoff():
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+    from foreman.log import metric, metrics_summary
+    with tempfile.TemporaryDirectory() as t:
+        md = os.path.join(t, ".foreman")
+        metric(md, "handoff_ok", role="architect")
+        metric(md, "handoff_miss", role="developer")
+        s = metrics_summary(md)
+        assert s["handoff_ok"] == 1 and s["handoff_miss"] == 1
+        assert s["handoff_success_rate"] == 0.5
 
 
 def test_secret_guard_blocks_env():
@@ -1413,6 +1455,8 @@ if __name__ == "__main__":
         ("executor mock e2e", test_executor_mock_inline),
         ("design approve gate", test_design_approve_gate),
         ("secret guard", test_secret_guard_blocks_env),
+        ("design check tokens", test_design_check_tokens),
+        ("metrics handoff", test_metrics_handoff),
         ("state done --force overrides", test_state_done_force_overrides),
         ("debt harvest markers", test_debt_harvest),
         ("debt skips build/", test_debt_skips_build_and_pycache),

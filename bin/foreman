@@ -48,6 +48,7 @@ case "$cmd" in
     case "$sub" in
       status|"") exec python3 "$TOOLS/design.py" --project "$PROJECT" --status "$@" ;;
       show)      exec python3 "$TOOLS/design.py" --project "$PROJECT" --show "$@" ;;
+      # show --open uses $EDITOR when set
       run)       exec python3 "$TOOLS/design.py" --project "$PROJECT" --run "$@" ;;
       approve)   exec python3 "$TOOLS/design.py" --project "$PROJECT" --approve "$@" ;;
       reject)
@@ -236,6 +237,17 @@ print(json.dumps(data, indent=2))
 PY2
     ;;
 
+  metrics)
+    python3 - "$FOREMAN_HOME" "$PROJECT" <<'PY'
+import json, os, sys
+sys.path.insert(0, sys.argv[1])
+from foreman.log import metrics_summary
+proj = sys.argv[2]
+md = os.path.join(proj, ".foreman")
+print(json.dumps(metrics_summary(md), indent=2))
+PY
+    ;;
+
   log)
     logfile="$PROJECT/.foreman/log.jsonl"
     if [ ! -f "$logfile" ]; then
@@ -387,6 +399,7 @@ foreman — agent / advanced commands (used by the AI, not day-to-day)
   validate | verify | commit | rollback --task-id T
   ready | discover | execute [--mock|--task-id T|--template todo]
   design status|show|run|approve|reject
+  metrics                         # handoff success rates
   info | plan | log | debt | memory …
   branch <name> | pr "<title>"
   deploy list | deploy install --device <id>
@@ -418,7 +431,8 @@ Build an app (outside the foreman repo — any Flutter project)
 Everyday commands
   foreman discover           Interactive product brainstorm → PRD + design
   foreman ready              Check if product docs are complete
-  foreman design run|show|approve   Design language (human review)
+  foreman design run|show|approve   Design language (human review; show --open)
+  foreman metrics            Handoff success rates
   foreman run                Discover/design gates, then autonomous OpenCode ship
   foreman execute            Hard loop: OpenCode role agents per task step
   foreman status             What is left to do

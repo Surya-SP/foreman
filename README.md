@@ -62,7 +62,8 @@ foreman run               # autonomous: OpenCode per role until DAG empty
 **TUI:** `opencode --agent foreman` then `/ship`.  
 **Default ship mode:** hard `execute` loop (not freeform chat). Legacy: `foreman run --agent-loop`.
 
-After a real ship, fill [docs/FIELD_REPORT.md](docs/FIELD_REPORT.md).
+After a real ship, fill [docs/FIELD_REPORT.md](docs/FIELD_REPORT.md).  
+Operational limits: [docs/KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md).
 
 ---
 
@@ -125,10 +126,11 @@ State: `.foreman/` (gitignore it). Design language: `tasks/design_language.md`.
 | Problem | Fix |
 |---------|-----|
 | `ready` fails | `foreman discover` |
-| design blocked | `foreman design show` then `approve` |
+| design blocked / WAITING FOR approve | `foreman design show` then `approve` then `run` |
 | `command not found: foreman` | fix PATH |
 | build stopped | `foreman run` again |
-| handoff missing | executor retries; check OpenCode role agent install |
+| handoff missing | `foreman metrics`; reinstall agents; stronger model |
+| colors ignore design language | `foreman verify --task-id T` (design_token findings) |
 
 ---
 
