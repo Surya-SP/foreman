@@ -20,6 +20,10 @@ Existing lib files: {{lib_files}}
 
 {{design}}
 
+## Repo memory (facts only)
+
+{{repo_memory}}
+
 ## Your tools
 
 You have `read`, `grep`, `bash`, `list`. Use them to:

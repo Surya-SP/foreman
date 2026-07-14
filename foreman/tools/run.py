@@ -84,8 +84,21 @@ if not ok_agent:
         "expected": agent_where,
     }, 1)
 
-# Optional: seed template before launching agent
+from foreman.readiness import assess
+
+force_ship = "--force" in sys.argv or "--skip-ready" in sys.argv
+ready_report = assess(target)
+
+# Optional: seed template only when product-ready (or forced)
 if template:
+    if not ready_report.get("ready") and not force_ship:
+        _out({
+            "ok": False,
+            "phase": "discover",
+            "message": "Cannot seed template until product docs are ready",
+            "ready": ready_report,
+            "hint": "foreman discover   then   foreman ready   then   foreman run --template todo",
+        }, 1)
     state_py = os.path.join(_ROOT, "foreman", "tools", "state.py")
     r = subprocess.run(
         [sys.executable, state_py, "--project", target, "--template", template],
@@ -94,16 +107,108 @@ if template:
     if r.returncode != 0:
         _out({"ok": False, "message": f"template seed failed: {r.stdout or r.stderr}"}, 1)
 
-# Default autonomous prompt
+# Gate: interactive discovery before autonomous ship
+if not ready_report.get("ready") and not force_ship:
+    # Launch agent in DISCOVER mode (interactive questions), not full ship
+    discover_msg = (
+        "Foreman DISCOVERY mode (interactive). Do NOT write app code. "
+        "export PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\". "
+        "Run foreman doctor, then foreman ready. "
+        "Product PRD/design are incomplete. Use the question tool to brainstorm with the user "
+        "(goal, users, features≥2, screens, colors, platforms, non-goals). "
+        "Then run: foreman discover --goal \"...\" --features \"A;B\" --screens \"Home\" --primary \"#2196F3\" "
+        "(or ask user to run foreman discover interactively). "
+        "Re-run foreman ready until ready=true. Then tell the user to run: foreman run "
+        "for autonomous build. Do not start the ship pipeline until ready."
+    )
+    if message:
+        discover_msg = message + "\n\n" + discover_msg
+    cmd = [opencode, "run", "--agent", "foreman", "--dir", target, "--title", "foreman-discover"]
+    # discovery needs user interaction — do not force --auto unless user asked
+    if model:
+        cmd.extend(["--model", model])
+    cmd.append(discover_msg)
+    if dry:
+        _out({
+            "ok": True,
+            "dry_run": True,
+            "phase": "discover",
+            "would_run": cmd,
+            "ready": ready_report,
+            "hint": "Product not ready — would open discovery. After ready: foreman run",
+        })
+    from foreman import ui
+    ui.block("Product discovery required", command="foreman run",
+             detail="PRD/design incomplete — starting interactive discovery",
+             footer="After ready: re-run foreman run to ship")
+    try:
+        proc = subprocess.run(cmd, cwd=target)
+        code = proc.returncode
+    except KeyboardInterrupt:
+        code = 130
+    except OSError as e:
+        _out({"ok": False, "message": f"failed to launch opencode: {e}"}, 1)
+    _out({
+        "ok": code == 0,
+        "phase": "discover",
+        "exit": code,
+        "ready": assess(target),
+        "hint": "When foreman ready passes, run: foreman run",
+    }, 0 if code == 0 else code)
+
+# Ship phase: hard executor drives OpenCode **role** agents (fully autonomous).
+# Prefer executor loop over freeform tech-lead chat for deterministic progress.
+use_legacy_agent = "--agent-loop" in sys.argv  # opt into old freeform tech-lead only
+
+if dry and not use_legacy_agent:
+    from foreman.executor import execute_project
+    result = execute_project(
+        _ROOT, target, model=model, template=None, dry=True, force=force_ship,
+    )
+    _out({
+        "ok": True,
+        "dry_run": True,
+        "phase": "ship",
+        "mode": "execute",
+        "executor": result,
+        "project": target,
+        "ready": ready_report,
+        "hint": "Remove --dry-run to run: foreman execute (OpenCode per role). Legacy: --agent-loop",
+    })
+
+if not use_legacy_agent:
+    from foreman import ui
+    from foreman.executor import execute_project
+    ui.run_banner(target, model, not no_auto)
+    if not ui.is_pretty():
+        print(f"foreman run → execute (OpenCode role agents) --dir {target}", file=sys.stderr)
+    sys.stderr.flush()
+    # Re-read template already applied above; pass None
+    result = execute_project(
+        _ROOT, target,
+        model=model,
+        template=None,
+        auto=not no_auto,
+        dry=False,
+        mock=False,
+        force=force_ship,
+    )
+    _out({
+        "ok": bool(result.get("ok")),
+        "phase": "ship",
+        "mode": "execute",
+        "project": target,
+        "result": result,
+        "hint": "Resume: foreman run   |   single task: foreman execute --task-id T",
+    }, 0 if result.get("ok") else 1)
+
+# Legacy: freeform OpenCode tech-lead agent loop
 default_msg = (
-    "Ship this project with Foreman. Work autonomously until the task DAG is empty or blocked. "
-    "Run: foreman doctor, then foreman next. "
-    "If no tasks, seed with foreman state template todo (or product_owner → state import from PRD). "
-    "For each ready task run the full pipeline: architect → qa_lead → developer → tester → "
-    "validate → reviewer → commit → state done. "
-    "On validate fail: debugger ≤3 then rollback+fail. "
-    "On CHANGES_REQUIRED: refactorer then re-validate. "
-    "Do not wait for me between steps. Only stop for deploy choices, escalations, or missing PRD."
+    "Ship this project with Foreman. Product docs are READY. Work autonomously until the task DAG is empty or blocked. "
+    "export PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\". "
+    "Prefer: run `foreman execute` yourself via bash to drive the hard OpenCode role loop. "
+    "Or manually: state plan → spawn → Task(subagent) → handoff → validate → commit → state done. "
+    "You have edit:deny. Never --force. Rollback only: foreman rollback --task-id T."
 )
 if message:
     default_msg = message + "\n\n" + default_msg
@@ -119,18 +224,16 @@ if dry:
     _out({
         "ok": True,
         "dry_run": True,
+        "phase": "ship",
+        "mode": "agent-loop",
         "would_run": cmd,
         "project": target,
         "agent": "foreman",
-        "hint": "Remove --dry-run to launch OpenCode. Or: opencode --agent foreman  then /ship",
+        "ready": ready_report,
     })
 
-# Stream OpenCode to the terminal (user watches the autonomous agent)
-print(f"foreman run → opencode --agent foreman --dir {target}", file=sys.stderr)
-print(f"  auto-approve: {not no_auto}  model: {model or '(default)'}", file=sys.stderr)
-print("─" * 60, file=sys.stderr)
-sys.stderr.flush()
-
+from foreman import ui
+ui.run_banner(target, model, not no_auto)
 try:
     proc = subprocess.run(cmd, cwd=target)
     code = proc.returncode
@@ -142,7 +245,8 @@ except OSError as e:
 _out({
     "ok": code == 0,
     "exit": code,
+    "mode": "agent-loop",
     "project": target,
     "agent": "foreman",
-    "hint": "Resume with: foreman run   or   foreman state resume",
+    "hint": "Resume with: foreman run",
 }, 0 if code == 0 else code)

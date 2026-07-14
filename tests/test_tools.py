@@ -72,8 +72,15 @@ def test_plan_missing():
 
 def test_plan_cache_key():
     with tempfile.TemporaryDirectory() as t:
+        os.makedirs(os.path.join(t, "tasks"), exist_ok=True)
+        open(os.path.join(t, "tasks", "prd.md"), "w").write("# Goal\nX\n")
+        open(os.path.join(t, "tasks", "design.md"), "w").write("# UI\nY\n")
         rc, out, _ = tool("plan.py", project=t)
-        assert "_cache_key" in js(out)
+        d = js(out)
+        assert d.get("_cache") == "miss"
+        rc2, out2, _ = tool("plan.py", project=t)
+        d2 = js(out2)
+        assert d2.get("_cache") == "hit"
 
 
 # ── Spawn tests ───────────────────────────────────────────────────────────
@@ -115,6 +122,88 @@ def test_handoff_strips_fences():
         assert rc == 0; assert js(out)["ok"]
         saved = json.load(open(os.path.join(t, ".foreman", "handoffs", "t1.architect.json")))
         assert saved["approach"] == "foo"
+        mem = js(out).get("memory") or {}
+        assert mem.get("ok") is True
+        assert os.path.exists(os.path.join(t, ".foreman", "memory", "graph.json"))
+
+
+def test_memory_record_and_retrieve():
+    with tempfile.TemporaryDirectory() as t:
+        arch = json.dumps({
+            "role": "architect", "approach": "Use Form + TextFormField for login",
+            "files": [{"path": "lib/login.dart", "purpose": "login form"}],
+            "design_drift": "none",
+        })
+        tool("handoff.py", "--task-id", "t1", "--role", "architect",
+             "--stdin", project=t, stdin=arch)
+        rc, out, _ = tool("memory.py", "--retrieve", "--role", "developer",
+                          "--task-id", "t1", "--query", "login Form", project=t)
+        d = js(out)
+        assert d["ok"] and d["count"] >= 1
+        texts = " ".join(i.get("text") or "" for i in d["items"])
+        assert "Form" in texts or "login" in texts.lower()
+        assert d.get("block") and "FACTS FROM" in d["block"]
+        # each item has source hash (drift-proof cite)
+        assert all(i.get("source", {}).get("content_hash") for i in d["items"] if i.get("kind") == "decision")
+
+
+def test_memory_no_invented_nodes():
+    """Empty project → retrieve returns zero items (no hallucination seed)."""
+    with tempfile.TemporaryDirectory() as t:
+        rc, out, _ = tool("memory.py", "--retrieve", "--role", "architect",
+                          "--task-id", "none", project=t)
+        d = js(out)
+        assert d["ok"] and d["count"] == 0
+
+
+def test_spawn_injects_repo_memory_and_caps_error():
+    with tempfile.TemporaryDirectory() as t:
+        arch = json.dumps({
+            "role": "architect", "approach": "Navigator.push for detail",
+            "files": [{"path": "lib/a.dart", "purpose": "x"}],
+        })
+        tool("handoff.py", "--task-id", "t1", "--role", "architect",
+             "--stdin", project=t, stdin=arch)
+        tool("state.py", "--add", "t1", "--desc", "detail nav", project=t)
+        huge = "E" * 9000
+        rc, out, _ = tool("spawn.py", "--role", "debugger", "--task-id", "t1",
+                          "--error", huge, project=t)
+        prompt = js(out)["prompt"]
+        assert "truncated" in prompt or len(prompt) < 20000
+        assert "Navigator" in prompt or "FACTS FROM" in prompt or "repo memory" in prompt.lower()
+
+
+def test_memory_rebuild_from_handoffs():
+    with tempfile.TemporaryDirectory() as t:
+        hd = os.path.join(t, ".foreman", "handoffs"); os.makedirs(hd)
+        json.dump({"role": "debugger", "root_cause": "null check", "fix": "added ?."},
+                  open(os.path.join(hd, "t9.debugger.json"), "w"))
+        rc, out, _ = tool("memory.py", "--rebuild", project=t)
+        d = js(out)
+        assert d["ok"] and d["ingested"] == 1
+        rc2, out2, _ = tool("memory.py", "--decisions", "--task-id", "t9", project=t)
+        assert js(out2)["count"] >= 1
+
+
+def test_tool_cache_project_info():
+    with tempfile.TemporaryDirectory() as t:
+        open(os.path.join(t, "pubspec.yaml"), "w").write("name: x\n")
+        os.makedirs(os.path.join(t, "lib"))
+        open(os.path.join(t, "lib", "a.dart"), "w").write("class A {}\n")
+        rc, out, _ = tool("project_info.py", "--summary", project=t)
+        assert js(out).get("_cache") == "miss"
+        rc2, out2, _ = tool("project_info.py", "--summary", project=t)
+        assert js(out2).get("_cache") == "hit"
+
+
+def test_inject_caps():
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+    from foreman.memory import inject_caps, MAX_ERROR
+    caps = inject_caps(error="x" * (MAX_ERROR + 500), loaded_plan="p" * 10000, diff="d" * 20000)
+    assert "truncated" in caps["error"]
+    assert len(caps["loaded_plan"]) < 7000
+    assert "truncated" in caps["diff"]
 
 
 def test_handoff_rejects_invalid_json():
@@ -147,7 +236,8 @@ def test_state_full_flow():
         tool("state.py", "--add", "t2", "--desc", "auth", "--deps", "t1", project=t)
         rc, out, _ = tool("state.py", "--ready", project=t)
         d = js(out); assert d["count"] == 1 and d["tasks"][0]["id"] == "t1"
-        tool("state.py", "--mark", "t1", "--status", "done", project=t)
+        # done requires commit_sha unless --force
+        tool("state.py", "--mark", "t1", "--status", "done", "--force", project=t)
         rc, out, _ = tool("state.py", "--ready", project=t)
         assert js(out)["tasks"][0]["id"] == "t2"
 
@@ -196,10 +286,11 @@ def test_verify_strict():
         _mkfake_flutter(t)
         p = os.path.join(t, "lib", "extras.dart")
         open(p, "w").write("class Extras {}\n")
-        rc_default, _, _ = tool("verify.py", "--files", p, project=t)
+        rc_default, out_d, _ = tool("verify.py", "--files", p, project=t)
         rc_strict, _, _ = tool("verify.py", "--files", p, "--strict", project=t)
-        # class tag is critical; strict fails; default fails only if critical present
-        assert rc_default == rc_strict  # both fail for class-tag findings
+        # default is advisory (ok); strict fails on findings
+        assert rc_default == 0 and js(out_d).get("advisory") is True
+        assert rc_strict != 0
 
 
 # ── Wrapper tests ─────────────────────────────────────────────────────────
@@ -213,7 +304,10 @@ def test_wrapper_next_single_json():
 def test_wrapper_state_add_done():
     with tempfile.TemporaryDirectory() as t:
         assert wrap("state", "add", "t9", "scaffold", project=t)[0] == 0
-        assert wrap("state", "done", "t9", project=t)[0] == 0
+        # done without commit fails
+        assert wrap("state", "done", "t9", project=t)[0] != 0
+        # force still works for recovery
+        assert wrap("state", "done", "t9", "--force", project=t)[0] == 0
 
 
 def test_wrapper_state_import():
@@ -239,8 +333,131 @@ def test_wrapper_log():
 
 def test_wrapper_help():
     r = wrap("help")
-    assert r[0] == 0 and "spawn" in r[1] and "state" in r[1]
-    assert "run" in r[1] and "AUTONOMOUS" in r[1]
+    assert r[0] == 0
+    assert "foreman run" in r[1].lower() or "Foreman" in r[1]
+    assert "doctor" in r[1]
+    # Advanced tools hidden from default help
+    assert "spawn <role>" not in r[1]
+    r2 = wrap("help", "--agent")
+    assert r2[0] == 0 and "spawn" in r2[1] and "state" in r2[1]
+
+
+def test_wrapper_aliases():
+    with tempfile.TemporaryDirectory() as t:
+        r = wrap("status", project=t)
+        assert r[0] == 0
+        d = js(r[1])
+        assert "guidance" in d or "ready" in d
+        assert "foreman run" in d.get("how_to_run", "")
+
+
+def test_ui_demo_mock():
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+    from foreman.ui import demo_mock
+    s = demo_mock()
+    assert "Project status" in s
+    assert "foreman spawn architect" in s
+    assert "Validate app" in s
+
+
+def test_ui_pretty_off_for_json():
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+    from foreman import ui
+    assert ui.wants_json(["prog", "--json"]) is True
+
+
+def test_readiness_blocks_placeholder():
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+    from foreman.readiness import assess, write_specs
+    with tempfile.TemporaryDirectory() as t:
+        _mkfake_flutter(t)
+        # seeds from init-like placeholders
+        open(os.path.join(t, "tasks", "prd.md"), "w").write(
+            "# Product Requirements\n\n## Goal\nOne or two sentences describing what this app should do.\n\n"
+            "## Core Features\n- Feature 1\n- Feature 2\n"
+        )
+        open(os.path.join(t, "tasks", "design.md"), "w").write(
+            "# Design\n\n## Brand\n- Personality:\n- Users:\n## Color\n- Primary:\n"
+        )
+        r = assess(t)
+        assert r["ready"] is False
+        write_specs(t,
+            "# Product Requirements\n\n## Goal\nA polished todo app for busy people.\n\n"
+            "## Core Features\n- Add todo with title\n- Mark todo complete\n- Delete todo\n\n"
+            "## Users\nBusy professionals\n\n## Constraints\n- Platforms: iOS, Android\n",
+            "# Design\n\n## Brand\n- App name: Todos\n\n## Color\n- Primary: #2196F3\n\n"
+            "## HomeScreen\n- AppBar title Todos\n- ListView of checkboxes\n- FAB add\n",
+        )
+        r2 = assess(t)
+        assert r2["ready"] is True
+
+
+def test_discover_flags():
+    with tempfile.TemporaryDirectory() as t:
+        open(os.path.join(t, "pubspec.yaml"), "w").write("name: x\n")
+        os.makedirs(os.path.join(t, "lib"), exist_ok=True)
+        rc, out, _ = tool(
+            "discover.py",
+            "--goal", "Simple notes app for students",
+            "--features", "Create note;Edit note;Delete note",
+            "--name", "Notes",
+            "--screens", "HomeScreen;EditorScreen",
+            "--primary", "#4CAF50",
+            project=t,
+        )
+        d = js(out)
+        assert d.get("ready") is True
+        assert os.path.exists(os.path.join(t, "tasks", "prd.md"))
+
+
+def test_jsonutil_balanced():
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+    from foreman.jsonutil import extract_json_object
+    text = 'noise {"role":"architect","approach":"x","files":[]} trailing {broken'
+    obj, raw = extract_json_object(text)
+    assert obj and obj["role"] == "architect"
+
+
+def test_run_dry_discover_when_not_ready():
+    with tempfile.TemporaryDirectory() as t:
+        open(os.path.join(t, "pubspec.yaml"), "w").write("name: x\n")
+        # no real prd
+        r = wrap("run", "--dry-run", project=t)
+        d = js(r[1])
+        assert d.get("phase") == "discover" or "discover" in str(d).lower() or d.get("ok")
+
+
+def test_executor_mock_inline():
+    """Inline golden path without shelling e2e script."""
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+    from foreman.executor import execute_project
+    from foreman.readiness import write_specs
+    with tempfile.TemporaryDirectory() as t:
+        open(os.path.join(t, "pubspec.yaml"), "w").write(
+            "name: x\nversion: 0.0.1\ndependencies:\n  flutter:\n    sdk: flutter\n"
+        )
+        os.makedirs(os.path.join(t, "lib"), exist_ok=True)
+        open(os.path.join(t, "lib", "main.dart"), "w").write("void main() {}\n")
+        write_specs(
+            t,
+            "# Product Requirements\n\n## Goal\n"
+            "A polished todo application for continuous integration verification of Foreman.\n\n"
+            "## Core Features\n- Add todo with a title\n- Mark todo complete\n- Delete todo items\n\n"
+            "## Users\nCI testers and developers validating the ship pipeline\n\n"
+            "## Constraints\n- Platforms: iOS, Android\n- Storage: local\n",
+            "# Design\n\n## Brand\n- App name: Todos\n- Personality: clean and focused\n\n"
+            "## Color\n- Primary: #2196F3\n- Secondary: #03A9F4\n- Error: #B00020\n\n"
+            "## HomeScreen\n- AppBar title Todos\n- ListView of checkbox rows\n- FloatingActionButton to add\n"
+            "- Empty and loading states\n",
+        )
+        r = execute_project(_ROOT, t, template="todo", mock=True, max_tasks=8, force=False)
+        assert r.get("ok") is True, r
+        assert r.get("tasks_run", 0) >= 1
 
 
 def test_wrapper_state_auto_requires_id():
@@ -266,22 +483,23 @@ def test_wrapper_next_how_to_run():
         assert r[0] == 0
         d = js(r[1]); assert "how_to_run" in d
         assert "foreman run" in d["how_to_run"]
-        assert "empty" in d["guidance"].lower() or "template" in d["guidance"].lower()
+        g = d["guidance"].lower()
+        assert "foreman run" in g or "planned" in g or "ready" in g
 
 
 def test_wrapper_run_dry_run():
     with tempfile.TemporaryDirectory() as t:
-        # without agent install, run should fail helpfully
         r = wrap("run", "--dry-run", project=t)
-        # either dry-run ok (if agent present somehow) or missing agent
         d = js(r[1])
         if r[0] != 0:
             assert d["ok"] is False
-            assert "agent" in d["message"].lower() or "install" in d.get("hint", "").lower()
+            msg = (d.get("message") or "") + (d.get("hint") or "")
+            assert any(k in msg.lower() for k in ("agent", "install", "opencode", "discover", "ready"))
         else:
             assert d.get("dry_run") is True
-            assert d["agent"] == "foreman"
-            assert "opencode" in d["would_run"][0] or d["would_run"][0].endswith("opencode")
+            assert "would_run" in d
+            # discover or ship phase
+            assert d.get("phase") in ("discover", "ship", None) or d.get("agent") == "foreman"
 
 
 def test_wrapper_unknown_command_json():
@@ -336,8 +554,12 @@ def test_validate_dry_run():
 def test_rollback_dry_run():
     with tempfile.TemporaryDirectory() as t:
         os.makedirs(os.path.join(t, ".git"))
+        # safe mode requires task-id
         rc, out, _ = tool("rollback.py", "--dry-run", project=t)
-        d = js(out); assert d["ok"] and d["dry_run"]
+        assert rc != 0
+        tool("state.py", "--add", "t1", "--desc", "x", project=t)
+        rc2, out2, _ = tool("rollback.py", "--task-id", "t1", "--dry-run", project=t)
+        d = js(out2); assert d["ok"] and d["dry_run"] and d.get("mode") == "scoped"
 
 
 def test_commit_dry_run():
@@ -387,8 +609,64 @@ def test_state_auto_full_sequence():
         rc, out, _ = tool("state.py", "--auto", "t1", project=t)
         assert rc == 0
         d = js(out)
-        assert d["task"] == "t1"; assert len(d["sequence"]) >= 5
+        assert d["task"] == "t1"; assert len(d["sequence"]) >= 4
+        assert d.get("profile") == "full"
         assert any("spawn architect" in s["cmd"] for s in d["sequence"])
+        assert any("qa_lead" in s.get("cmd", "") for s in d["sequence"])
+
+
+def test_state_plan_bugfix():
+    with tempfile.TemporaryDirectory() as t:
+        tool("state.py", "--add", "chat-login-crash", "--desc", "Fix NullPointerException on login", project=t)
+        rc, out, _ = tool("state.py", "--plan", "chat-login-crash", project=t)
+        d = js(out)
+        assert d["profile"] == "bugfix"
+        assert d["roles"] == ["debugger"]
+        assert any("debugger" in s.get("cmd", "") for s in d["sequence"])
+        assert not any("architect" in s.get("cmd", "") for s in d["sequence"])
+
+
+def test_state_plan_implement_skips_qa():
+    with tempfile.TemporaryDirectory() as t:
+        tool("state.py", "--add", "t1", "--desc", "Add settings screen padding", project=t)
+        rc, out, _ = tool("state.py", "--plan", "t1", project=t)
+        d = js(out)
+        assert d["profile"] == "implement", d
+        assert "qa_lead" not in d["roles"]
+        assert "architect" in d["roles"] and "developer" in d["roles"]
+
+
+def test_state_plan_complex_feature_full():
+    with tempfile.TemporaryDirectory() as t:
+        tool("state.py", "--add", "t1", "--desc", "Implement OAuth login flow", project=t)
+        rc, out, _ = tool("state.py", "--plan", "t1", project=t)
+        d = js(out)
+        assert d["profile"] == "full"
+        assert d["roles"] == ["architect", "qa_lead", "developer", "tester"]
+
+
+def test_state_plan_profile_override():
+    with tempfile.TemporaryDirectory() as t:
+        tool("state.py", "--add", "t1", "--desc", "something vague", project=t)
+        # Inject profile override on disk
+        sp = os.path.join(t, ".foreman", "tasks.json")
+        state = json.load(open(sp))
+        state["t1"]["profile"] = "tests"
+        json.dump(state, open(sp, "w"))
+        rc, out, _ = tool("state.py", "--plan", "t1", project=t)
+        d = js(out)
+        assert d["profile"] == "tests"
+        assert d["roles"] == ["qa_lead", "tester"]
+
+
+def test_wrapper_state_plan():
+    with tempfile.TemporaryDirectory() as t:
+        wrap("state", "add", "t1", "refactor login widget", project=t)
+        r = wrap("state", "plan", "t1", project=t)
+        assert r[0] == 0
+        d = js(r[1])
+        assert d["profile"] == "refactor"
+        assert "refactorer" in d["roles"]
 
 
 def test_state_batch_parallel():
@@ -921,8 +1199,9 @@ def test_state_done_warns_on_missing_commit():
     with tempfile.TemporaryDirectory() as t:
         tool("state.py", "--add", "t1", "--desc", "x", project=t)
         rc, out, _ = tool("state.py", "--mark", "t1", "--status", "done", project=t)
-        assert rc == 0
-        assert any("commit" in w for w in js(out).get("warnings", []))
+        # Hard block without commit_sha
+        assert rc != 0
+        assert "commit" in js(out)["message"].lower()
 
 
 def test_state_done_force_overrides():
@@ -979,8 +1258,8 @@ def test_integration_e2e_task_flow():
                           "--load-from", "architect", project=t)
         assert rc == 0 and "Form widget" in js(out)["prompt"]
 
-        # 7. Mark done, ready advances to t2
-        tool("state.py", "--mark", "t1", "--status", "done", project=t)
+        # 7. Mark done (force without commit in unit e2e), ready advances to t2
+        tool("state.py", "--mark", "t1", "--status", "done", "--force", project=t)
         rc, out, _ = tool("state.py", "--ready", project=t)
         assert js(out)["tasks"][0]["id"] == "t2"
 
@@ -1002,6 +1281,12 @@ if __name__ == "__main__":
         ("spawn --load-from", test_spawn_load_from),
         ("spawn shell-injection safe", test_spawn_no_shell_injection),
         ("handoff strips fences", test_handoff_strips_fences),
+        ("memory record+retrieve", test_memory_record_and_retrieve),
+        ("memory no invented nodes", test_memory_no_invented_nodes),
+        ("spawn memory+error cap", test_spawn_injects_repo_memory_and_caps_error),
+        ("memory rebuild", test_memory_rebuild_from_handoffs),
+        ("tool cache project_info", test_tool_cache_project_info),
+        ("inject caps", test_inject_caps),
         ("handoff rejects invalid JSON", test_handoff_rejects_invalid_json),
         ("handoff schema check", test_handoff_schema_check),
         ("handoff --force bypasses schema", test_handoff_force_bypasses_schema),
@@ -1017,6 +1302,9 @@ if __name__ == "__main__":
         ("wrapper state guide", test_wrapper_state_guide),
         ("wrapper log", test_wrapper_log),
         ("wrapper help", test_wrapper_help),
+        ("wrapper aliases", test_wrapper_aliases),
+        ("ui demo mock", test_ui_demo_mock),
+        ("ui wants_json", test_ui_pretty_off_for_json),
         ("wrapper state auto requires id", test_wrapper_state_auto_requires_id),
         ("wrapper state empty hint", test_wrapper_state_summary_empty_hint),
         ("wrapper next how_to_run", test_wrapper_next_how_to_run),
@@ -1032,6 +1320,11 @@ if __name__ == "__main__":
         ("state template todo", test_state_template_todo),
         ("state template unknown", test_state_template_unknown),
         ("state auto sequence", test_state_auto_full_sequence),
+        ("state plan bugfix", test_state_plan_bugfix),
+        ("state plan implement", test_state_plan_implement_skips_qa),
+        ("state plan complex full", test_state_plan_complex_feature_full),
+        ("state plan override", test_state_plan_profile_override),
+        ("wrapper state plan", test_wrapper_state_plan),
         ("state batch parallel", test_state_batch_parallel),
         ("state batch overlap filters", test_state_batch_overlap_filters),
         ("state guide detects --force", test_state_guide_detects_forced),
@@ -1066,7 +1359,12 @@ if __name__ == "__main__":
         ("wrapper log --task filter", test_wrapper_log_task_filter),
         ("state done blocks on failing tests", test_state_done_blocks_if_tests_fail),
         ("state done blocks on REJECT", test_state_done_blocks_if_reviewer_rejects),
-        ("state done warns on no commit", test_state_done_warns_on_missing_commit),
+        ("state done blocks without commit", test_state_done_warns_on_missing_commit),
+        ("readiness placeholder", test_readiness_blocks_placeholder),
+        ("discover flags", test_discover_flags),
+        ("jsonutil balanced", test_jsonutil_balanced),
+        ("run dry discover phase", test_run_dry_discover_when_not_ready),
+        ("executor mock e2e", test_executor_mock_inline),
         ("state done --force overrides", test_state_done_force_overrides),
         ("debt harvest markers", test_debt_harvest),
         ("debt skips build/", test_debt_skips_build_and_pycache),

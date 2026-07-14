@@ -13,11 +13,13 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(_HERE, "..", "..")))
 
 from foreman.sdk import detect_sdk
+from foreman import memory as mem
 
 def _arg(name, default=None):
     return next((sys.argv[i+1] for i,a in enumerate(sys.argv) if a==name), default)
 
 target = os.path.abspath(_arg("--project") or os.environ.get("FOREMAN_PROJECT") or ".")
+no_cache = "--no-cache" in sys.argv
 
 FRAMEWORKS = [
     ("flutter", "pubspec.yaml", (".dart",)),
@@ -92,12 +94,38 @@ if "--brief" in sys.argv:
 
 result = {"ok": True, "framework": framework, "project_dir": target}
 
+# Watch pubspec + (flutter) for cache invalidation; source list uses walk so
+# also watch project root mtime via pubspec + optional lib dir.
+_watch = [
+    os.path.join(target, m)
+    for _n, m, _e in FRAMEWORKS
+    if os.path.exists(os.path.join(target, m))
+]
+lib_dir = os.path.join(target, "lib")
+if os.path.isdir(lib_dir):
+    _watch.append(lib_dir)
+_key = ["summary" if "--summary" in sys.argv else "full", since or "", subdir or "", str(lines or "")]
+
+if not no_cache and "--brief" not in sys.argv:
+    hit = mem.tool_cache_get(target, "project_info", _key, _watch)
+    if hit is not None:
+        hit = dict(hit)
+        hit["_cache"] = "hit"
+        json.dump(hit, sys.stdout, indent=2)
+        sys.exit(0)
+
 if "--summary" in sys.argv:
     result["sdk"] = detect_sdk() if framework == "flutter" else {}
     if framework == "flutter":
         result["packages_count"] = len(_pubspec_deps(target))
     result["source_file_count"] = len(_source_files(target, exts))
     result["git"] = _git(target)
+    result["_cache"] = "miss"
+    if not no_cache:
+        try:
+            mem.tool_cache_set(target, "project_info", _key, _watch, result)
+        except OSError:
+            pass
     json.dump(result, sys.stdout, indent=2)
     sys.exit(0)
 
@@ -113,4 +141,10 @@ else:
     result["source_files"] = files[:lines] if lines else files
     result["git"] = _git(target)
 
+result["_cache"] = "miss"
+if not no_cache:
+    try:
+        mem.tool_cache_set(target, "project_info", _key, _watch, result)
+    except OSError:
+        pass
 json.dump(result, sys.stdout, indent=2)

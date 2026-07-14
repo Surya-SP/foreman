@@ -18,6 +18,10 @@ SDK: {{sdk}}
 Packages: {{packages}}
 Project dir: {{project_dir}}
 
+## Repo memory (facts only)
+
+{{repo_memory}}
+
 ## Your tools
 
 You have `read`, `grep`, `bash`, `write`, `edit`, `list`. Use them to:

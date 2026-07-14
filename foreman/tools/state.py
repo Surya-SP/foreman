@@ -8,11 +8,12 @@ Actions:
   --mark <id> --status STATUS [--error TEXT]
   --pending | --ready | --blocked | --all | --dag | --reset
   --task <id>
-  --guide <id>                 next-step for one task
-  --auto  <id>                 full command sequence for whole task
+  --plan  <id>                 analyze task → needed roles only (PRINT)
+  --guide <id>                 next-step for one task (uses smart plan)
+  --auto  <id>                 remaining sequence for needed roles (PRINT)
   --batch [N]                  N ready tasks safe to run in parallel
 """
-import json, os, sys, time
+import json, os, re, sys, time
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.abspath(os.path.join(_HERE, "..", ".."))
 sys.path.insert(0, _ROOT)
@@ -39,7 +40,13 @@ def _load():
 def _save(state): json.dump(state, open(state_path, "w"), indent=2)
 
 def _out(obj, code=0):
+    from foreman import ui
+    if obj.get("profile") is not None and obj.get("task") and (
+        "--plan" in sys.argv or "--auto" in sys.argv
+    ):
+        ui.state_plan_view(obj)
     json.dump(obj, sys.stdout, indent=2)
+    print()
     log(state_dir, "state.py", code, int((time.time()-_start)*1000))
     sys.exit(code)
 
@@ -77,8 +84,252 @@ def _touches_files(tid):
         return {(f.get("path") if isinstance(f, dict) else f) for f in files}
     except (json.JSONDecodeError, OSError): return set()
 
+# ── Smart role planner ──────────────────────────────────────────────────────
+# Classify task text → only the sub-agents that are actually needed.
+# profile: full | implement | bugfix | tests | review | refactor | design | scope
+
+_RE_BUG = re.compile(
+    r"\b(bug|fix|crash|error|exception|stacktrace|stack\s*trace|failing|"
+    r"broken|regression|null\s*check|npe|segfault|assert(?:ion)?\s*error|"
+    r"validate\s+fail|analyzer\s+error|build\s+fail|runtime\s+error)\b",
+    re.I,
+)
+_RE_TEST = re.compile(
+    r"\b(unit\s*test|widget\s*test|integration\s*test|golden\s*test|"
+    r"test\s*coverage|write\s+tests?|add\s+tests?|missing\s+tests?|"
+    r"test\s+plan|qa\s+only|coverage\s+gap)\b",
+    re.I,
+)
+_RE_REVIEW = re.compile(
+    r"\b(code\s*review|review\s+(this|the|pr|diff|change)|is\s+this\s+ok|"
+    r"lgtm|approve|verdict)\b",
+    re.I,
+)
+_RE_REFACTOR = re.compile(
+    r"\b(refactor|cleanup|clean\s*up|rename|simplify|dedupe|deduplicate|"
+    r"extract\s+(method|widget|class)|reorganize|lint\s+fix)\b",
+    re.I,
+)
+_RE_DESIGN = re.compile(
+    r"\b(architect(?:ure)?|design\s+(only|the|how)|how\s+should\s+we\s+split|"
+    r"structure\s+only|plan\s+only|approach\s+only)\b",
+    re.I,
+)
+_RE_SCOPE = re.compile(
+    r"\b(prd|product\s*owner|priorit|backlog|scope|roadmap|"
+    r"what\s+should\s+we\s+build|break\s+down\s+(the\s+)?prd)\b",
+    re.I,
+)
+_RE_FEATURE = re.compile(
+    r"\b(add|implement|build|create|new\s+feature|screen|page|widget|"
+    r"flow|feature|integrate|support)\b",
+    re.I,
+)
+_RE_COMPLEX = re.compile(
+    r"\b(auth|login|oauth|payment|checkout|sync|offline|migration|"
+    r"multi[- ]?step|navigation\s+graph|state\s+management|bloc|riverpod|"
+    r"provider|database|sqlite|hive|api\s+client|websocket|push\s+notif|"
+    r"permission|secure\s*storage|deep\s*link)\b",
+    re.I,
+)
+_RE_TRIVIAL = re.compile(
+    r"\b(typo|wording|copy\s+change|label|padding|margin|color|hex|"
+    r"spacing|icon\s+only|string\s+const|const\s+string|bump\s+version|"
+    r"changelog|comment\s+only|docs?\s+only)\b",
+    re.I,
+)
+_RE_TEST_SIGNAL = re.compile(
+    r"\b(test|spec|coverage|golden|mock|fake)\b", re.I,
+)
+
+def _task_blob(t):
+    parts = [
+        str(t.get("id") or ""),
+        str(t.get("description") or ""),
+        str(t.get("acceptance") or ""),
+        str(t.get("last_error") or ""),
+    ]
+    return " ".join(parts)
+
+def _classify_task(tid, t):
+    """Return (profile, reasons[]) from task text + status signals."""
+    blob = _task_blob(t)
+    reasons = []
+    st = _status(t)
+
+    if st == "failed" or t.get("last_error"):
+        reasons.append("failed/last_error → bugfix")
+        return "bugfix", reasons
+
+    override = (t.get("profile") or t.get("pipeline") or "").strip().lower()
+    if override in ("full", "implement", "bugfix", "tests", "review",
+                    "refactor", "design", "scope"):
+        reasons.append(f"task.profile={override}")
+        return override, reasons
+
+    if tid.startswith("chat-") and _RE_BUG.search(blob):
+        reasons.append("chat-* + bug keywords")
+        return "bugfix", reasons
+
+    # Intent verbs first (even if domain words like "login" appear)
+    if _RE_REFACTOR.search(blob):
+        reasons.append("refactor keywords")
+        return "refactor", reasons
+    if _RE_REVIEW.search(blob):
+        reasons.append("review keywords")
+        return "review", reasons
+    if _RE_DESIGN.search(blob):
+        reasons.append("design-only keywords")
+        return "design", reasons
+    if _RE_SCOPE.search(blob) and not _RE_FEATURE.search(blob):
+        reasons.append("scope/PRD keywords")
+        return "scope", reasons
+    if _RE_BUG.search(blob):
+        # "fix login" / stacktrace → bugfix; pure "add login" has no bug words
+        reasons.append("bug/fix keywords")
+        return "bugfix", reasons
+    if _RE_TEST.search(blob) and not _RE_FEATURE.search(blob):
+        reasons.append("test-only keywords")
+        return "tests", reasons
+
+    if _RE_COMPLEX.search(blob) and _RE_FEATURE.search(blob):
+        reasons.append("complex domain + feature → full pipeline")
+        return "full", reasons
+    if _RE_COMPLEX.search(blob) and not _RE_TRIVIAL.search(blob):
+        reasons.append("complex domain keywords → full pipeline")
+        return "full", reasons
+    if _RE_TRIVIAL.search(blob):
+        reasons.append("trivial UI/copy → implement (skip qa_lead)")
+        return "implement", reasons
+    if _RE_FEATURE.search(blob) or len(blob.split()) >= 6:
+        acc = str(t.get("acceptance") or "")
+        if _RE_TEST_SIGNAL.search(acc) or acc.count(";") >= 2 or acc.count("\n") >= 2:
+            reasons.append("feature + multi acceptance/tests → full")
+            return "full", reasons
+        reasons.append("feature/default → implement (architect+dev; tests if needed)")
+        return "implement", reasons
+
+    reasons.append("fallback → full pipeline")
+    return "full", reasons
+
+_PROFILE_ROLES = {
+    "full":      ["architect", "qa_lead", "developer", "tester"],
+    "implement": ["architect", "developer", "tester"],
+    "bugfix":   ["debugger"],
+    "tests":     ["qa_lead", "tester"],
+    "review":    [],
+    "refactor":  ["refactorer"],
+    "design":    ["architect"],
+    "scope":     ["product_owner"],
+}
+
+def _plan_roles(tid, t, have=None):
+    """Compute needed roles + remaining work for a task."""
+    have = set(have if have is not None else _handoff_files(tid))
+    st = _status(t)
+    profile, reasons = _classify_task(tid, t)
+    roles = list(_PROFILE_ROLES.get(profile, _PROFILE_ROLES["full"]))
+
+    if profile == "implement":
+        touches = _touches_files(tid) if "architect" in have else set()
+        blob = _task_blob(t)
+        if touches and len(touches) <= 1 and not _RE_TEST_SIGNAL.search(blob):
+            if "tester" in roles:
+                roles = [r for r in roles if r != "tester"]
+                reasons.append("single-file plan + no test signal → skip tester")
+
+    needs_validate = profile not in ("design", "scope")
+    needs_reviewer = needs_validate and profile not in ("design", "scope")
+    needs_code = profile not in ("design", "scope", "review")
+
+    remaining_roles = [r for r in roles if r not in have]
+    skipped = [r for r in roles if r in have]
+
+    return {
+        "profile": profile,
+        "reasons": reasons,
+        "roles": roles,
+        "remaining_roles": remaining_roles,
+        "already_done": skipped,
+        "needs_validate": needs_validate,
+        "needs_reviewer": needs_reviewer,
+        "needs_code": needs_code,
+        "status": st,
+    }
+
+def _sequence_for_plan(tid, plan):
+    """Build printable command sequence from a smart plan."""
+    seq, step = [], 1
+    for role in plan["remaining_roles"]:
+        if role == "architect":
+            seq.append({"step": step, "role": role,
+                        "cmd": f"foreman spawn architect {tid} --self-handoff",
+                        "then": "Task tool agent=architect"}); step += 1
+        elif role == "qa_lead":
+            seq.append({"step": step, "role": role,
+                        "cmd": f"foreman spawn qa_lead {tid} --self-handoff",
+                        "then": "Task tool agent=qa_lead"}); step += 1
+        elif role == "developer":
+            load = " --load-from architect" if "architect" in plan["roles"] else ""
+            seq.append({"step": step, "role": role,
+                        "cmd": f"foreman spawn developer {tid}{load} --self-handoff",
+                        "then": "Task tool agent=developer"}); step += 1
+        elif role == "tester":
+            load = " --load-from qa_lead" if "qa_lead" in plan["roles"] else ""
+            seq.append({"step": step, "role": role,
+                        "cmd": f"foreman spawn tester {tid}{load} --self-handoff",
+                        "then": "Task tool agent=tester"}); step += 1
+        elif role == "debugger":
+            seq.append({"step": step, "role": role,
+                        "cmd": f"foreman spawn debugger {tid} --error \"$(foreman validate --lines 200)\" --self-handoff",
+                        "then": "Task tool agent=debugger"}); step += 1
+        elif role == "refactorer":
+            seq.append({"step": step, "role": role,
+                        "cmd": f"foreman spawn refactorer {tid} --self-handoff",
+                        "then": "Task tool agent=refactorer"}); step += 1
+        elif role == "product_owner":
+            seq.append({"step": step, "role": role,
+                        "cmd": f"foreman spawn product_owner {tid} --self-handoff",
+                        "then": "Task tool agent=product_owner; maybe state import"}); step += 1
+
+    if plan["status"] == "done":
+        return [{"step": 0, "cmd": "# already done"}]
+
+    if plan["needs_validate"] and plan["profile"] != "review":
+        branches = {
+            "PASS": [f"foreman verify --task-id {tid}"],
+            "FAIL": [f"foreman spawn debugger {tid} --error \"$OUT\" --self-handoff  (retry ≤3)",
+                     f"foreman rollback && foreman state fail {tid}  (if 3 fails)"],
+        }
+        if plan["needs_reviewer"]:
+            branches["PASS"] += [
+                f"foreman spawn reviewer {tid}",
+                "# Task tool agent=reviewer (NO self-handoff)",
+                f"printf '%s\\n' \"$REV\" | foreman handoff {tid} reviewer",
+                f"if APPROVED: foreman commit --task-id {tid} --desc \"...\"",
+                f"             foreman state done {tid}",
+                f"if CHANGES_REQUIRED: foreman spawn refactorer {tid} --load-from reviewer --self-handoff",
+                "                     then re-run validate",
+            ]
+        else:
+            branches["PASS"] += [
+                f"foreman commit --task-id {tid} --desc \"...\"",
+                f"foreman state done {tid}",
+            ]
+        seq.append({"step": step, "cmd": "foreman validate --lines 200", "branches": branches})
+    elif plan["profile"] == "review":
+        seq.append({"step": step, "role": "reviewer",
+                    "cmd": f"foreman spawn reviewer {tid}",
+                    "then": "Task tool agent=reviewer (NO self-handoff); handoff; act on verdict"})
+    elif plan["profile"] == "design":
+        seq.append({"step": step, "cmd": f"# design-only: keep handoff; foreman state done {tid} if no code needed"})
+    elif plan["profile"] == "scope":
+        seq.append({"step": step, "cmd": f"# scope: import tasks if PO returned tasks[]; then state done {tid}"})
+
+    return seq
+
 # ---- Flags ----
-task_id  = _arg("--add") or _arg("--mark") or _arg("--task") or _arg("--guide") or _arg("--auto") or ""
+task_id  = _arg("--add") or _arg("--mark") or _arg("--task") or _arg("--guide") or _arg("--auto") or _arg("--plan") or ""
 desc     = _arg("--desc", "")
 deps_str = _arg("--deps", "")
 accept   = _arg("--acceptance", "")
@@ -223,9 +474,12 @@ if "--mark" in sys.argv:
                     _out({"ok": False, "message": "Reviewer requested changes. Run refactorer or pass --force."}, 1)
             except (json.JSONDecodeError, OSError):
                 pass
-        # Warn on missing commit sha
+        # Hard require commit (autonomy integrity)
         if not state[task_id].get("commit_sha"):
-            warnings.append("no commit_sha — task marked done but never committed")
+            _out({"ok": False,
+                  "message": "Cannot mark done without commit_sha. Run: foreman commit --task-id "
+                             + task_id + " --desc \"...\"",
+                  "hint": "commit first, then state done (or --force only for recovery)"}, 1)
 
     if status_v: state[task_id]["status"] = status_v
     if error_v:
@@ -255,7 +509,31 @@ if "--task" in sys.argv:
     t["conflicts"] = conflicts
     _out({"ok": True, "task": t})
 
-# ---- Guide (next step) ----
+# ---- Plan (smart: analyze → needed roles only) ----
+if "--plan" in sys.argv:
+    if not task_id:
+        _out({"ok": False, "message": "state plan requires a task-id",
+              "hint": "foreman state plan scaffold"}, 1)
+    if task_id not in state:
+        _out({"ok": False, "message": f"Task '{task_id}' not found", "hint": "foreman state all"}, 1)
+    t = state[task_id]
+    have = _handoff_files(task_id)
+    plan = _plan_roles(task_id, t, have)
+    seq = _sequence_for_plan(task_id, plan)
+    _out({"ok": True, "task": task_id, "status": plan["status"],
+          "task_desc": t.get("description", ""),
+          "acceptance": t.get("acceptance", ""),
+          "profile": plan["profile"],
+          "reasons": plan["reasons"],
+          "roles": plan["roles"],
+          "remaining_roles": plan["remaining_roles"],
+          "already_done": plan["already_done"],
+          "needs_validate": plan["needs_validate"],
+          "needs_reviewer": plan["needs_reviewer"],
+          "sequence": seq,
+          "note": "SMART PLAN — only needed roles. Execute via spawn→Task; or foreman run"})
+
+# ---- Guide (next step, smart) ----
 if "--guide" in sys.argv:
     if task_id not in state: _out({"ok": False, "message": f"Task '{task_id}' not found"}, 1)
     t = state[task_id]; st = _status(t)
@@ -263,25 +541,28 @@ if "--guide" in sys.argv:
     forced = _forced_roles(task_id)
     warns = []
     if forced: warns.append(f"Handoffs saved with --force (suspect): {forced}")
+    plan = _plan_roles(task_id, t, have)
     if st == "done":
         steps = ["Task complete.",
                  "(optional) foreman deploy list  → ask user which platform/device",
                  "(optional) foreman deploy install --device <id>  → build + install for testing"]
-    elif st == "failed":
-        steps = [f"foreman spawn debugger {task_id} --error \"$(foreman validate)\"  → task"]
-    elif "architect" not in have:
-        steps = [f"foreman spawn architect {task_id}  → task",
-                 f"foreman handoff {task_id} architect  <<< $ARCH_OUT"]
-    elif "developer" not in have:
-        steps = [f"foreman spawn developer {task_id} --load-from architect  → task",
-                 f"foreman handoff {task_id} developer  <<< $DEV_OUT",
-                 f"foreman validate --lines 200"]
-    else:
+    elif st == "failed" or plan["profile"] == "bugfix" and "debugger" in plan["remaining_roles"]:
+        steps = [f"foreman spawn debugger {task_id} --error \"$(foreman validate)\"  → Task agent=debugger"]
+    elif plan["remaining_roles"]:
+        role = plan["remaining_roles"][0]
+        steps = [f"profile={plan['profile']}: foreman spawn {role} {task_id}  → Task agent={role}",
+                 f"foreman state plan {task_id}  # full smart sequence"]
+    elif plan["needs_validate"]:
         steps = ["foreman validate --lines 200",
-                 f"# on pass: foreman verify {task_id} && foreman spawn reviewer {task_id}"]
-    _out({"ok": True, "task": task_id, "status": st, "next_steps": steps, "warnings": warns})
+                 f"# on pass: foreman verify --task-id {task_id}" +
+                 (f" && foreman spawn reviewer {task_id}" if plan["needs_reviewer"] else "")]
+    else:
+        steps = [f"No remaining roles (profile={plan['profile']}). Consider: foreman state done {task_id}"]
+    _out({"ok": True, "task": task_id, "status": st, "profile": plan["profile"],
+          "roles": plan["roles"], "remaining_roles": plan["remaining_roles"],
+          "reasons": plan["reasons"], "next_steps": steps, "warnings": warns})
 
-# ---- Auto (full sequence, adaptive) ----
+# ---- Auto (smart remaining sequence) ----
 if "--auto" in sys.argv:
     if not task_id:
         _out({"ok": False, "message": "state auto requires a task-id",
@@ -289,60 +570,36 @@ if "--auto" in sys.argv:
               "note": "auto only PRINTS the plan — use foreman run to execute"}, 1)
     if task_id not in state: _out({"ok": False, "message": f"Task '{task_id}' not found",
                                    "hint": "foreman state all"}, 1)
+    t = state[task_id]
     have = _handoff_files(task_id)
-    st = _status(state[task_id])
+    st = _status(t)
+    plan = _plan_roles(task_id, t, have)
 
     if st == "done":
-        _out({"ok": True, "task": task_id, "status": "done", "sequence": [{"step": 0, "cmd": "# already done"}],
+        _out({"ok": True, "task": task_id, "status": "done", "profile": plan["profile"],
+              "sequence": [{"step": 0, "cmd": "# already done"}],
               "note": "This is a plan only. Autonomous execution: foreman run"})
     if st == "failed":
-        _out({"ok": True, "task": task_id, "status": "failed",
-              "note": "This is a plan only. Autonomous execution: foreman run",
-              "sequence": [{"step": 1, "cmd": f"foreman spawn debugger {task_id} --error \"$(foreman validate --lines 200)\""},
-                          {"step": 2, "cmd": f"foreman handoff {task_id} debugger", "stdin": "sub-agent output"},
-                          {"step": 3, "cmd": "foreman validate --lines 200"}]})
+        plan = _plan_roles(task_id, {**t, "status": "failed", "last_error": t.get("last_error") or "failed"}, have)
+        seq = _sequence_for_plan(task_id, {**plan, "profile": "bugfix",
+                                           "roles": ["debugger"],
+                                           "remaining_roles": ["debugger"] if "debugger" not in have else [],
+                                           "needs_validate": True, "needs_reviewer": True})
+        _out({"ok": True, "task": task_id, "status": "failed", "profile": "bugfix",
+              "reasons": plan["reasons"], "sequence": seq,
+              "note": "This is a plan only. Autonomous execution: foreman run"})
 
-    full = [
-        ("architect", [
-            {"cmd": f"foreman spawn architect {task_id} --self-handoff", "then": "Task tool agent=architect"},
-            {"cmd": f"# confirm .foreman/handoffs/{task_id}.architect.json (self-handoff) or: handoff {task_id} architect"}]),
-        ("qa_lead", [
-            {"cmd": f"foreman spawn qa_lead {task_id} --self-handoff", "then": "Task tool agent=qa_lead"},
-            {"cmd": f"# confirm handoff {task_id}.qa_lead.json"}]),
-        ("developer", [
-            {"cmd": f"foreman spawn developer {task_id} --load-from architect --self-handoff", "then": "Task tool agent=developer"},
-            {"cmd": f"# confirm handoff {task_id}.developer.json"}]),
-        ("tester", [
-            {"cmd": f"foreman spawn tester {task_id} --load-from qa_lead --self-handoff", "then": "Task tool agent=tester"},
-            {"cmd": f"# confirm handoff {task_id}.tester.json"}]),
-    ]
-
-    seq, step, skipped = [], 1, []
-    for role, cmds in full:
-        if role in have:
-            skipped.append(role); continue
-        for c in cmds:
-            c["step"] = step; step += 1; seq.append(c)
-
-    # Validate + review gate is always run (unless task already done)
-    seq.append({"step": step, "cmd": "foreman validate --lines 200",
-                "branches": {
-                    "PASS": [f"foreman verify --task-id {task_id}",
-                             f"foreman spawn reviewer {task_id}",
-                             f"# Task tool agent=reviewer (NO self-handoff)",
-                             f"printf '%s\\n' \"$REV\" | foreman handoff {task_id} reviewer",
-                             f"if APPROVED: foreman commit --task-id {task_id} --desc \"...\"",
-                             f"                foreman state done {task_id}",
-                             f"                (optional) foreman deploy list  →  ask user  →  foreman deploy install --device <id>",
-                             f"if CHANGES_REQUIRED: foreman spawn refactorer {task_id} --load-from reviewer --self-handoff",
-                             f"                     then re-run validate"],
-                    "FAIL": [f"foreman spawn debugger {task_id} --error \"$OUT\" --self-handoff  (retry ≤3)",
-                             f"foreman rollback && foreman state fail {task_id}  (if 3 fails)"]}})
+    seq = _sequence_for_plan(task_id, plan)
     _out({"ok": True, "task": task_id, "status": st,
-          "task_desc": state[task_id].get("description",""),
-          "acceptance": state[task_id].get("acceptance",""),
-          "already_done": skipped, "sequence": seq,
-          "note": "PLAN ONLY — does not execute. Autonomous: foreman run  |  TUI: opencode --agent foreman /ship"})
+          "task_desc": t.get("description", ""),
+          "acceptance": t.get("acceptance", ""),
+          "profile": plan["profile"],
+          "reasons": plan["reasons"],
+          "roles": plan["roles"],
+          "remaining_roles": plan["remaining_roles"],
+          "already_done": plan["already_done"],
+          "sequence": seq,
+          "note": "SMART PLAN ONLY — needed roles only. Autonomous: foreman run  |  TUI: opencode --agent foreman /ship"})
 
 # ---- Batch (parallel-safe ready tasks) ----
 if "--batch" in sys.argv:
@@ -414,8 +671,8 @@ if total == 0:
 elif ready_n:
     first = next(k for k, t in sorted(state.items())
                  if _status(t) == "pending" and _deps_done(t, state))
-    hint = (f"{ready_n} ready. Next: foreman state guide {first}  "
-            f"|  Autonomous: foreman run  |  Plan only: foreman state auto {first}")
+    hint = (f"{ready_n} ready. Next: foreman state plan {first}  "
+            f"|  Autonomous: foreman run  |  Guide: foreman state guide {first}")
 elif pending_n:
     hint = "Tasks pending but blocked on deps. See: foreman state blocked"
 elif done_n == total:

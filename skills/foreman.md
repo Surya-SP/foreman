@@ -1,8 +1,10 @@
 # Foreman — agentic app builder
 
-You are the **Tech Lead**. Prefer the OpenCode **foreman** primary agent
-(Tab to select, or `foreman run` / `/ship`). Use the `foreman` CLI wrapper —
-never raw python paths.
+**Users:** `discover` → `ready` → `run` · `status` · `doctor` · `deploy`.
+
+You are the **Tech Lead (orchestrator)**. `edit` is denied. Prefer OpenCode **foreman**
+agent. **Gate:** `foreman ready` before any ship pipeline. If not ready: interactive
+discovery only. If ready: classify → spawn → Task(subagent). Never implement app code.
 
 ## Autonomy model
 
@@ -11,12 +13,28 @@ foreman run                          # launches opencode --agent foreman --auto
 opencode --agent foreman → /ship     # same agent in TUI
 ```
 
-You drive the loop. `state guide` / `state auto` only **print** plans.
+You drive the loop. `state plan` / `guide` / `auto` only **print** plans.
 
 ```
 seed tasks → for each ready task:
-  spawn role → OpenCode Task(subagent=role) → handoff → validate → review → commit → done
+  state plan T → spawn ONLY remaining_roles → Task(subagent) → handoff
+  → validate/review if plan needs them → commit → done
 ```
+
+Freeform user messages (bugs, features mid-session):
+
+```
+foreman state add chat-<slug> "..." --acceptance "..."   # no deps on main DAG
+spawn <role> → Task(subagent) → track until chat task done
+```
+
+| Signal | First role |
+|--------|------------|
+| error / stacktrace / fix | debugger |
+| feature / add behavior | architect (full pipeline) |
+| tests | qa_lead / tester |
+| review | reviewer |
+| cleanup | refactorer |
 
 ## Role hierarchy (OpenCode subagents)
 
@@ -44,8 +62,9 @@ foreman state pending|ready|blocked|all|dag|reset|resume|escalations
 foreman state add <id> "<desc>" [--deps a,b] [--acceptance "..."]
 foreman state done <id>  |  foreman state fail <id> [err]
 foreman state task <id>
+foreman state plan <id>           # smart: needed roles only (PRINT)
 foreman state guide <id>          # next step (PRINT only)
-foreman state auto <id>           # full sequence (PRINT only)
+foreman state auto <id>           # remaining smart sequence (PRINT only)
 foreman state batch [N]
 foreman state import              # stdin: {"tasks":[...]}
 foreman state template <todo|chat|blog>
@@ -79,18 +98,17 @@ foreman state import               <<< $PO_JSON
 foreman run                        # preferred
 # or opencode --agent foreman + /ship
 
-── Per task (what the agent executes) ───────────────────────
+── Per task (smart) ─────────────────────────────────────────
 foreman state resume
-foreman spawn architect T --self-handoff      → Task agent=architect
-foreman spawn qa_lead T --self-handoff        → Task agent=qa_lead
-foreman spawn developer T --load-from architect --self-handoff
-foreman spawn tester T --load-from qa_lead --self-handoff
-foreman validate --lines 200
-  PASS → verify → spawn reviewer (NO self-handoff) → handoff
-         APPROVED → commit + state done
-         CHANGES_REQUIRED → refactorer → re-validate
-  FAIL → debugger ≤3 → else rollback + state fail
+foreman state plan T              # profile + remaining_roles — first
+# spawn ONLY remaining_roles (not always full pipeline)
+foreman validate --lines 200      # if needs_validate
+  PASS → verify → [reviewer if needs_reviewer] → commit + done
+  FAIL → debugger ≤3 → else foreman rollback --task-id T → state fail
 ```
+
+`foreman run` (after ready) drives this via **execute**: each role is an
+OpenCode `run --agent <role>` session. Fully autonomous; still OpenCode.
 
 ## Self-handoff
 
@@ -100,10 +118,9 @@ the verdict).
 
 ## Safety rails on `state done`
 
-- Tester `all_pass: false` → debugger
-- Reviewer `REJECT` → escalate
-- Reviewer `CHANGES_REQUIRED` → refactorer
-- Missing `commit_sha` → warning only
+- Tester `all_pass: false` → blocked
+- Reviewer `REJECT` / `CHANGES_REQUIRED` → blocked
+- Missing `commit_sha` → **blocked** (commit first; `--force` recovery only)
 
 ## YAGNI ladder
 

@@ -20,16 +20,56 @@ export FOREMAN_HOME FOREMAN_PROJECT="$PROJECT"
 
 cmd="${1:-}"; shift || true
 
+# Friendly aliases (user-facing)
+case "$cmd" in
+  ship)   cmd="run" ;;
+  status) cmd="next" ;;
+  check)  cmd="doctor" ;;
+esac
+
 case "$cmd" in
   info)     exec python3 "$TOOLS/project_info.py" --project "$PROJECT" "$@" ;;
   plan)     exec python3 "$TOOLS/plan.py"         --project "$PROJECT" "$@" ;;
   validate) exec python3 "$TOOLS/validate.py"     --project "$PROJECT" "$@" ;;
   verify)   exec python3 "$TOOLS/verify.py"       --project "$PROJECT" "$@" ;;
   commit)   exec python3 "$TOOLS/commit.py"       --project "$PROJECT" "$@" ;;
-  rollback) exec python3 "$TOOLS/rollback.py"     --project "$PROJECT" "$@" ;;
+  rollback)
+    # Safe scoped rollback: require --task-id unless hard flags passed through
+    exec python3 "$TOOLS/rollback.py" --project "$PROJECT" "$@"
+    ;;
   init)     exec python3 "$TOOLS/init.py"         --project "$PROJECT" "$@" ;;
   debt)     exec python3 "$TOOLS/debt.py"         --project "$PROJECT" "$@" ;;
   run)      exec python3 "$TOOLS/run.py"          --project "$PROJECT" "$@" ;;
+  ready)    exec python3 "$TOOLS/ready.py"        --project "$PROJECT" "$@" ;;
+  discover) exec python3 "$TOOLS/discover.py"     --project "$PROJECT" "$@" ;;
+  execute)  exec python3 "$TOOLS/execute.py"      --project "$PROJECT" "$@" ;;
+  memory)
+    sub="${1:-stats}"; shift || true
+    case "$sub" in
+      stats|"")
+        exec python3 "$TOOLS/memory.py" --project "$PROJECT" --stats "$@" ;;
+      retrieve)
+        exec python3 "$TOOLS/memory.py" --project "$PROJECT" --retrieve "$@" ;;
+      decisions)
+        exec python3 "$TOOLS/memory.py" --project "$PROJECT" --decisions "$@" ;;
+      rebuild)
+        exec python3 "$TOOLS/memory.py" --project "$PROJECT" --rebuild "$@" ;;
+      rg)
+        if [ -z "${1:-}" ]; then
+          echo '{"ok":false,"message":"memory rg requires a pattern","hint":"foreman memory rg ClassName [--glob \"*.dart\"]"}'
+          exit 2
+        fi
+        pat="$1"; shift
+        exec python3 "$TOOLS/memory.py" --project "$PROJECT" --rg "$pat" "$@" ;;
+      cache-clear)
+        exec python3 "$TOOLS/memory.py" --project "$PROJECT" --cache-clear "$@" ;;
+      rg-status)
+        exec python3 "$TOOLS/memory.py" --project "$PROJECT" --rg-status "$@" ;;
+      *)
+        echo "{\"ok\":false,\"message\":\"unknown memory subcommand: $sub\",\"hint\":\"try: stats|retrieve|decisions|rebuild|rg|cache-clear|rg-status\"}"
+        exit 2 ;;
+    esac
+    ;;
 
   deploy)
     sub="${1:-list}"; shift || true
@@ -103,6 +143,13 @@ case "$cmd" in
         fi
         tid="$1"; shift
         exec python3 "$TOOLS/state.py" --project "$PROJECT" --task "$tid" "$@" ;;
+      plan)
+        if [ -z "${1:-}" ]; then
+          echo '{"ok":false,"message":"state plan requires a task-id","hint":"foreman state plan scaffold   # smart: only needed roles"}'
+          exit 2
+        fi
+        tid="$1"; shift
+        exec python3 "$TOOLS/state.py" --project "$PROJECT" --plan "$tid" "$@" ;;
       guide)
         if [ -z "${1:-}" ]; then
           echo '{"ok":false,"message":"state guide requires a task-id","hint":"foreman state guide scaffold   # shows the next 1–2 steps only"}'
@@ -112,7 +159,7 @@ case "$cmd" in
         exec python3 "$TOOLS/state.py" --project "$PROJECT" --guide "$tid" "$@" ;;
       auto)
         if [ -z "${1:-}" ]; then
-          echo '{"ok":false,"message":"state auto requires a task-id","hint":"foreman state auto scaffold","note":"auto only PRINTS the remaining command sequence — it does not execute. Use: foreman run"}'
+          echo '{"ok":false,"message":"state auto requires a task-id","hint":"foreman state auto scaffold","note":"auto only PRINTS the remaining command sequence (smart roles) — it does not execute. Use: foreman run"}'
           exit 2
         fi
         tid="$1"; shift
@@ -130,43 +177,48 @@ case "$cmd" in
       summary|"")
         exec python3 "$TOOLS/state.py" --project "$PROJECT" "$@" ;;
       *)
-        echo "{\"ok\":false,\"message\":\"unknown state subcommand: $sub\",\"hint\":\"try: pending|ready|blocked|all|dag|reset|resume|escalations|import|add|done|fail|task|guide|auto|batch|template|summary\",\"tip\":\"empty DAG? foreman state template todo   or   foreman run\"}"
+        echo "{\"ok\":false,\"message\":\"unknown state subcommand: $sub\",\"hint\":\"try: pending|ready|blocked|all|dag|reset|resume|escalations|import|add|done|fail|task|plan|guide|auto|batch|template|summary\",\"tip\":\"empty DAG? foreman state template todo   or   foreman run\"}"
         exit 2 ;;
     esac
     ;;
 
-  next)
-    # Single JSON: {brief, ready, guidance, how_to_run}
+  next|status)
+    # Human blocks on stderr; JSON on stdout (agent-safe)
     brief=$(python3 "$TOOLS/project_info.py" --project "$PROJECT" --brief 2>/dev/null || echo "?")
     ready=$(python3 "$TOOLS/state.py" --project "$PROJECT" --ready 2>/dev/null || echo '{"ok":false}')
     total=$(python3 "$TOOLS/state.py" --project "$PROJECT" 2>/dev/null || echo '{"total":0}')
-    python3 - <<PYEOF
-import json
+    FOREMAN_HOME="$FOREMAN_HOME" FOREMAN_PROJECT="$PROJECT" python3 - "$ready" "$total" "$brief" <<'PY2'
+import json, sys, os
+sys.path.insert(0, os.environ["FOREMAN_HOME"])
+from foreman import ui
 try:
-    r = json.loads('''$ready''')
+    r = json.loads(sys.argv[1])
 except Exception:
     r = {"ok": False, "count": 0, "tasks": []}
 try:
-    t = json.loads('''$total''')
+    t = json.loads(sys.argv[2])
 except Exception:
     t = {"total": 0}
+brief = sys.argv[3] if len(sys.argv) > 3 else "?"
 n = r.get("count", 0)
 tot = t.get("total", 0)
 if tot == 0:
-    guide = "Task DAG is empty. Seed: foreman state template todo  OR  foreman spawn product_owner then state import. Autonomous: foreman run"
+    guide = "Nothing planned yet. Run: foreman run   (or edit tasks/prd.md + design.md first)"
 elif n == 0:
-    guide = "No ready tasks (all blocked or done). Check: foreman state pending | foreman state all"
+    guide = "No open work right now (done or waiting). Run: foreman run to resume"
 else:
     tid = r["tasks"][0]["id"]
-    guide = f"Next ready task: {tid}. Autonomous: foreman run   Manual: foreman state guide {tid} then execute spawn→Task→handoff"
-print(json.dumps({
-    "brief": "$brief".strip(),
+    guide = f"Ready to build next: {tid}. Run: foreman run"
+data = {
+    "brief": brief.strip(),
     "ready": r,
     "total_tasks": tot,
     "guidance": guide,
-    "how_to_run": "foreman run   # launches OpenCode foreman agent (autonomous). Or: opencode --agent foreman then /ship",
-}, indent=2))
-PYEOF
+    "how_to_run": "foreman run",
+}
+ui.status_view(data)
+print(json.dumps(data, indent=2))
+PY2
     ;;
 
   log)
@@ -213,9 +265,10 @@ PYEOF
     ;;
 
   doctor)
-    # Self-check: env, wrapper, prompts, agents, python, project layout
     python3 - "$FOREMAN_HOME" "$PROJECT" <<'PYEOF'
 import json, os, shutil, sys
+sys.path.insert(0, sys.argv[1])
+from foreman import ui
 home, proj = sys.argv[1], sys.argv[2]
 checks = []
 def c(name, ok, detail=""):
@@ -231,11 +284,15 @@ c("templates", len([f for f in os.listdir(os.path.join(home, "templates")) if f.
 c("python3", shutil.which("python3") is not None)
 c("opencode", shutil.which("opencode") is not None, "required for foreman run")
 c("git", shutil.which("git") is not None)
+c("ripgrep (rg)", shutil.which("rg") is not None or shutil.which("ripgrep") is not None,
+  "(optional but recommended)")
 c("flutter", shutil.which("flutter") is not None, "(optional)")
-c("dart", shutil.which("dart") is not None, "(optional; needed for verify --ast)")
-c("gh", shutil.which("gh") is not None, "(optional; needed for foreman pr)")
+c("dart", shutil.which("dart") is not None, "(optional)")
+c("gh", shutil.which("gh") is not None, "(optional)")
+mem_dir = os.path.join(proj, ".foreman", "memory")
+c(".foreman/memory", True, mem_dir if os.path.isdir(mem_dir) else "created on first handoff")
 c("PROJECT exists", os.path.isdir(proj), proj)
-c("PROJECT is git repo", os.path.isdir(os.path.join(proj, ".git")), "(optional; needed for commit)")
+c("PROJECT is git repo", os.path.isdir(os.path.join(proj, ".git")), "(optional)")
 xdg = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
 g_agent = os.path.join(xdg, "opencode", "agent", "foreman.md")
 p_agent = os.path.join(proj, ".opencode", "agent", "foreman.md")
@@ -243,18 +300,17 @@ agent_ok = any(os.path.exists(p) or os.path.islink(p) for p in (
     p_agent, os.path.join(proj, ".opencode", "agents", "foreman.md"),
     g_agent, os.path.join(xdg, "opencode", "agents", "foreman.md")))
 c("foreman agent (project or global)", agent_ok,
-  g_agent if not agent_ok else ("project+global" if (os.path.exists(p_agent) or os.path.islink(p_agent)) and (os.path.exists(g_agent) or os.path.islink(g_agent))
-                                else ("project" if os.path.exists(p_agent) or os.path.islink(p_agent) else "global")))
-c(".foreman/", os.path.isdir(os.path.join(proj, ".foreman")), "(optional; created on first tool run)")
+  "global" if agent_ok else g_agent)
+c(".foreman/", os.path.isdir(os.path.join(proj, ".foreman")), "(optional)")
 tasks = os.path.join(proj, ".foreman", "tasks.json")
 if os.path.exists(tasks):
     try:
         n = len(json.load(open(tasks)))
-        c("task DAG", True, f"{n} tasks in .foreman/tasks.json")
+        c("task DAG", True, f"{n} tasks")
     except Exception:
         c("task DAG", False, "tasks.json unreadable")
 else:
-    c("task DAG", True, "empty — seed with: foreman state template todo  or  foreman run --template todo")
+    c("task DAG", True, "empty — run foreman run after init")
 failed = [x for x in checks if not x["ok"] and "optional" not in x["detail"].lower()]
 next_steps = []
 if any(x["check"] == "opencode" and not x["ok"] for x in checks):
@@ -262,22 +318,21 @@ if any(x["check"] == "opencode" and not x["ok"] for x in checks):
 if any(x["check"] == "foreman agent (project or global)" and not x["ok"] for x in checks):
     next_steps.append(f"One-time global install: {home}/install.sh")
 if not failed:
-    next_steps.append("Autonomous: foreman run   |   TUI: opencode --agent foreman then /ship")
-print(json.dumps({"ok": len(failed) == 0, "checks": checks,
-                   "critical_failures": len(failed),
-                   "next": next_steps}, indent=2))
+    next_steps.append("Next: foreman discover  →  foreman ready  →  foreman run")
+data = {"ok": len(failed) == 0, "checks": checks,
+        "critical_failures": len(failed), "next": next_steps}
+ui.doctor_view(data)
+print(json.dumps(data, indent=2))
 sys.exit(0 if not failed else 1)
 PYEOF
     ;;
 
   branch)
-    # Create/switch branch: `foreman branch feature/t3`
     name="${1:?branch name required}"; shift
     exec git -C "$PROJECT" checkout -B "$name" "$@"
     ;;
 
   pr)
-    # Open a PR for current branch: `foreman pr "title" [body]`
     title="${1:?title required}"; shift
     body="${1:-Automated PR by foreman}"; [ -n "${1:-}" ] && shift || true
     if ! command -v gh >/dev/null 2>&1; then
@@ -288,71 +343,86 @@ PYEOF
       --title "$title" --body "$body" "$@"
     ;;
 
+  demo|ux-demo)
+    # Show mock pretty UX (no project needed)
+    python3 - "$FOREMAN_HOME" <<'PY'
+import sys, os
+sys.path.insert(0, sys.argv[1])
+from foreman.ui import demo_mock
+print(demo_mock())
+PY
+    ;;
+
   ""|help|-h|--help)
-    cat <<EOF
-foreman <cmd> [args]
+    # Default help = simple user surface. Agent tools: foreman help --agent
+    if [ "${1:-}" = "--agent" ] || [ "${1:-}" = "agent" ] || [ "${1:-}" = "--all" ]; then
+      cat <<EOF
+foreman — agent / advanced commands (used by the AI, not day-to-day)
 
-AUTONOMOUS (preferred):
-  run [--template todo|chat|blog] [--message "..."] [--model provider/model]
-      [--dry-run] [--no-auto]
-      Launch OpenCode with the foreman agent. It drives the full pipeline.
-      Also:  opencode --agent foreman    then type /ship
-             Tab to switch to the foreman primary agent in the TUI
-
-Quick path:
-  1. ./install.sh                        # once, global
-  2. flutter create my_app && cd my_app  # Foreman needs an existing Flutter project
-  3. foreman init                        # seed tasks/prd.md + design.md
-  4. fill tasks/prd.md + tasks/design.md
-  5. foreman run --template todo         # autonomous ship
-  6. (alt TUI) opencode --agent foreman then /ship
-
-Inspection:
-  info [--summary|--brief|--filter PATH|--since REF|--lines N]
-  plan [--section NAME|--lines N|--no-cache]
-  next                              # brief + ready + guidance (one JSON)
-  log [N]                           # tail last N audit lines
-  doctor                            # env + install sanity check
-
-Task DAG:
-  state pending | ready | blocked | all | dag | reset | resume | escalations
+  state pending|ready|blocked|all|dag|reset|resume|escalations
   state add <id> "<desc>" [--deps a,b] [--acceptance "..."]
   state done <id> | state fail <id> [error]
-  state task <id>
-  state guide <id>                  # next 1–2 steps (does NOT execute)
-  state auto <id>                   # full remaining sequence (PRINT only)
-  state batch [N]                   # N parallel-safe ready tasks
-  state import                      # stdin JSON: {"tasks":[...]}
-  state template <todo|chat|blog>   # seed a pre-planned DAG
+  state task|plan|guide|auto <id>
+  state batch [N] | import | template <todo|chat|blog>
 
-Sub-agents (low-level; foreman agent calls these for you):
   spawn <role> [task_id] [--load-from ROLE] [--error ...] [--self-handoff]
-      roles: product_owner architect qa_lead developer tester reviewer
-             refactorer debugger
-      NOTE: spawn only prints a prompt. OpenCode Task tool runs the LLM.
-  handoff <task_id> <role>          # stdin: raw sub-agent JSON output
+  handoff <task_id> <role>          # stdin: JSON
 
-Build gates:
-  validate [--lines N|--dry-run|--coverage|--min-coverage PCT]
-  verify [--task-id ID|--files ...|--strict|--ast|--ast-only]
-  commit --task-id ID --desc "..." [--branch feat/t3] [--dry-run]
-  rollback [--dry-run]
-  init
+  validate | verify | commit | rollback --task-id T
+  ready | discover | execute [--mock|--task-id T|--template todo]
+  info | plan | log | debt | memory …
+  branch <name> | pr "<title>"
+  deploy list | deploy install --device <id>
 
-Git & PR:
-  branch <name>
-  pr "<title>" ["<body>"]
-
-Deploy:
-  deploy list [--platform ios|android|macos|web|linux|windows]
-  deploy install --device <id> [--mode debug|profile|release]
-
-Other:
-  log --summary | log --task <id>
-  debt [--path lib/]
+Prefer: foreman discover → ready → run
 EOF
+    else
+      cat <<EOF
+Foreman — autonomous Flutter app builder
+
+You write what to build. Foreman builds it.
+
+Setup (once)
+  1. Install OpenCode:  https://opencode.ai
+  2. Install Flutter:   https://docs.flutter.dev/get-started
+  3. Install Foreman:
+       git clone https://github.com/Surya-SP/foreman
+       cd foreman && ./install.sh
+       export PATH="\$HOME/.local/bin:\$PATH"
+
+Build an app (outside the foreman repo — any Flutter project)
+  1. flutter create my_app && cd my_app
+  2. foreman doctor
+  3. foreman discover        # interactive PRD + design
+  4. foreman ready           # must pass
+  5. foreman run             # autonomous OpenCode ship
+
+Everyday commands
+  foreman discover           Interactive product brainstorm → PRD + design
+  foreman ready              Check if product docs are complete
+  foreman run                Discover if needed, else autonomous OpenCode ship
+  foreman execute            Hard loop: OpenCode role agents per task step
+  foreman status             What is left to do
+  foreman doctor             Fix install / PATH problems
+  foreman init               Empty PRD + design templates
+  foreman deploy list        List phones / simulators
+  foreman deploy install --device <id>
+  foreman demo               Preview terminal look (mock)
+
+Flow
+  discover → ready → run (execute drives opencode --agent <role>)
+
+Tips
+  • Restart OpenCode after install
+  • PATH: export PATH="\$HOME/.local/bin:/opt/homebrew/bin:\$PATH"
+  • Stuck mid-build? foreman run again
+  • TUI: opencode --agent foreman then /ship
+
+Agent tools:  foreman help --agent
+EOF
+    fi
     ;;
   *)
-    echo "{\"ok\":false,\"message\":\"unknown command: $cmd\",\"hint\":\"foreman help   |   foreman run   |   foreman next\"}" >&2
+    echo "{\"ok\":false,\"message\":\"unknown command: $cmd\",\"hint\":\"foreman help   |   foreman run   |   foreman status\"}" >&2
     exit 2 ;;
 esac

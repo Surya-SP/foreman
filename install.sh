@@ -77,6 +77,35 @@ echo "  Agents:  $GLOBAL_OC/agent/  ($agent_count files)"
 echo "  Command: $GLOBAL_OC/command/ship.md  → /ship"
 echo "  Skill:   $GLOBAL_OC/skill/foreman/"
 
+# ── ripgrep (token-cheap code search for agents) ────────────────────────────
+if command -v rg >/dev/null 2>&1; then
+  echo "  rg:      $(command -v rg)  ($(rg --version 2>/dev/null | head -1))"
+else
+  echo "  rg:      not found — installing ripgrep if package manager available…"
+  installed=0
+  if command -v brew >/dev/null 2>&1; then
+    if brew list ripgrep >/dev/null 2>&1 || brew install ripgrep; then
+      installed=1
+      echo "  rg:      via brew → $(command -v rg || true)"
+    fi
+  fi
+  if [ "$installed" -eq 0 ] && command -v apt-get >/dev/null 2>&1; then
+    if (sudo -n apt-get install -y ripgrep 2>/dev/null) || (apt-get install -y ripgrep 2>/dev/null); then
+      installed=1
+      echo "  rg:      via apt → $(command -v rg || true)"
+    fi
+  fi
+  if [ "$installed" -eq 0 ] && command -v pacman >/dev/null 2>&1; then
+    if sudo -n pacman -S --noconfirm ripgrep 2>/dev/null; then
+      installed=1
+      echo "  rg:      via pacman → $(command -v rg || true)"
+    fi
+  fi
+  if ! command -v rg >/dev/null 2>&1; then
+    echo "  rg:      STILL MISSING — install: brew install ripgrep  |  apt install ripgrep"
+  fi
+fi
+
 # ── Optional per-project ────────────────────────────────────────────────────
 if [ -n "$TARGET" ] && [ "$GLOBAL_ONLY" -eq 0 ]; then
   echo ""
@@ -101,13 +130,14 @@ Done. Global install is enough for every project.
 Ensure PATH:
   export PATH="\$HOME/.local/bin:\$PATH"
 
-In any project (create Flutter app first if you don't have one):
-  flutter create my_app && cd my_app   # or: cd existing_flutter_project
+Build an app:
+  flutter create my_app && cd my_app
   foreman doctor
-  foreman init                         # seed tasks/prd.md + design.md
-  # edit tasks/prd.md + tasks/design.md
-  foreman run --template todo          # or: opencode --agent foreman → /ship
+  foreman discover    # interactive product brainstorm
+  foreman ready       # must pass
+  foreman run         # autonomous ship
 
-Runtime state is created automatically at <project>/.foreman/ on first use.
-No per-project install required after this global setup.
+Flow: discover → ready → run
+Agent tools: foreman help --agent
+
 EOF

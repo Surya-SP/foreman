@@ -29,7 +29,12 @@ coverage = "--coverage" in sys.argv
 min_cov = _arg("--min-coverage"); min_cov = float(min_cov) if min_cov else 0.0
 
 def _out(obj, code):
+    from foreman import ui
+    summary = obj.get("summary") or ("pass" if obj.get("ok") else "fail")
+    if not obj.get("dry_run"):
+        ui.validate_view(bool(obj.get("ok")), str(summary)[:120])
     json.dump(obj, sys.stdout, indent=2)
+    print()
     log(os.path.join(target, ".foreman"), "validate.py", code, int((time.time()-_start)*1000))
     sys.exit(code)
 

@@ -13,6 +13,10 @@ actionable tasks with acceptance criteria and dependencies. Edit no code.
 
 {{project_memory}}
 
+## Repo memory (facts only)
+
+{{repo_memory}}
+
 ## Your tools
 
 You have `read`, `grep`, `bash`, `list`. The PRD/design excerpts above may be

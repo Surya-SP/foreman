@@ -48,7 +48,11 @@ target = os.path.abspath(_arg("--project") or os.environ.get("FOREMAN_PROJECT") 
 
 
 def _out(obj, code=0):
+    from foreman import ui
+    if obj.get("devices") is not None or (obj.get("ok") and "count" in obj and "--install" not in sys.argv):
+        ui.deploy_list_view(obj)
     json.dump(obj, sys.stdout, indent=2)
+    print()
     log(os.path.join(target, ".foreman"), "deploy.py", code, int((time.time()-_start)*1000))
     sys.exit(code)
 

@@ -5,7 +5,11 @@ description: Use when shipping a Flutter app from tasks/prd.md and tasks/design.
 
 # Foreman skill (Tech Lead reference)
 
-You are driving the **Foreman** pipeline. Prefer the **foreman** primary agent when available (Tab to switch, or `/ship`). Use the `foreman` CLI — never raw python tool paths.
+You are **orchestrator only** (`edit` denied on primary). Prefer **foreman** agent (Tab, `/ship`).
+
+**Phases:** `foreman ready` first. If not ready → discover (questions + `foreman discover`). If ready → ship via spawn/Task only.
+
+Use the `foreman` CLI — never raw python tool paths.
 
 **PATH:** OpenCode bash often lacks `~/.local/bin`. First command every session:
 ```bash
@@ -15,10 +19,15 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 ## One-line model
 
 ```
-seed tasks → for each ready task → spawn role → Task(subagent) → handoff → validate → review → commit → done → next
+classify user intent → (chat- task if freeform) → state plan → spawn ONLY needed roles → Task → handoff → done
+seed main DAG → for each ready task → state plan T → execute remaining_roles (never full pipeline by default)
 ```
 
-`foreman state auto <id>` **prints** that sequence; it does **not** execute it. You execute it.
+`foreman state plan <id>` / `auto <id>` **print** the smart plan; they do **not** execute. You execute **by delegating only listed roles**.
+
+## Hard rule: do not implement
+
+Tech Lead / this skill must **not** edit `lib/`, `test/`, or app source. Bugs, features, refactors → `foreman state add chat-<slug> "…"` (no deps on main tasks) → `foreman spawn <role>` → **Task** tool with that subagent.
 
 ## Seed
 
@@ -34,29 +43,49 @@ foreman spawn product_owner --self-handoff
 foreman state import                 # stdin: {"tasks":[...]}
 ```
 
-## One task
+## One task (smart)
 
 ```bash
-foreman state resume                 # → task id
-foreman spawn architect T --self-handoff     # Task agent=architect
-foreman spawn qa_lead T --self-handoff       # Task agent=qa_lead
-foreman spawn developer T --load-from architect --self-handoff
-foreman spawn tester T --load-from qa_lead --self-handoff
-foreman validate --lines 200
-# PASS:
-foreman verify --task-id T
-foreman spawn reviewer T                     # Task agent=reviewer, NO self-handoff
-printf '%s\n' "$REV" | foreman handoff T reviewer
-# APPROVED → commit + state done
-# CHANGES_REQUIRED → refactorer → re-validate
-# FAIL validate → debugger ≤3 → else rollback + state fail
+foreman state resume                 # → task id T
+foreman state plan T                 # profile + remaining_roles — DO THIS FIRST
+# spawn ONLY roles in remaining_roles (not always architect→qa→dev→tester)
+# e.g. bugfix → debugger only; implement → architect+developer[+tester]
+foreman validate --lines 200         # if needs_validate
+# PASS + needs_reviewer → verify → reviewer → commit + done
+# FAIL → debugger ≤3
 ```
+
+## Freeform chat (user pastes bug / asks for work)
+
+```
+foreman next && foreman state all
+foreman state add chat-<slug> "<goal>" --acceptance "..."
+# route: bug→debugger | feature→architect (full) | tests→qa_lead/tester | review→reviewer | cleanup→refactorer
+foreman spawn debugger chat-<slug> --error "<paste>" --self-handoff   # example
+# Task agent=<role> with spawn.prompt → track handoffs → validate → commit → state done
+```
+
+Chat tasks must use id prefix `chat-` and **must not** depend on (or block) main ship tasks.
+
+## Memory (facts only)
+
+```
+foreman memory stats
+foreman memory retrieve --role developer --task-id T
+foreman memory decisions --task-id T
+foreman memory rg SymbolName --glob "*.dart"
+foreman memory rebuild          # from handoffs if graph missing
+foreman memory cache-clear
+```
+
+Handoffs auto-write decisions into `.foreman/memory/`. Spawn injects a capped fact block. No invented memory.
 
 ## Safety
 
 - `state done` blocks on tester all_pass=false, REJECT, CHANGES_REQUIRED
 - handoff refuses invalid schema (fix or --force with audit)
 - `foreman log --task T` for debugging
+- Never self-implement; always spawn + Task
 
 ## YAGNI ladder
 

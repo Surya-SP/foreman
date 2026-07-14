@@ -17,6 +17,10 @@ Tester writes any tests. Edit nothing.
 
 {{design}}
 
+## Repo memory (facts only)
+
+{{repo_memory}}
+
 ## Your tools
 
 You have `read`, `grep`, `bash`, `list`. Use them to:

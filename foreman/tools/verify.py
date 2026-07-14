@@ -185,9 +185,18 @@ by_tag = {}
 for f in all_findings:
     by_tag[f["tag"]] = by_tag.get(f["tag"], 0) + 1
 
-fail = len(all_findings) > 0 if strict else len(critical) > 0
+# Default: advisory (ok=true) — heuristic design drift must not block ship.
+# Use --strict to fail on any finding; --gate to fail on critical tags only.
+gate = "--gate" in sys.argv
+if strict:
+    fail = len(all_findings) > 0
+elif gate:
+    fail = len(critical) > 0
+else:
+    fail = False
 result = {
     "ok": not fail,
+    "advisory": not strict and not gate,
     "task_id": task_id or "",
     "design_exists": bool(design),
     "files_checked": [s["path"] for s in scanned if s.get("exists")],
@@ -197,5 +206,6 @@ result = {
     "findings": all_findings[:30],
     "ast_mode": ast_mode,
     "ast_diagnostics_count": len(ast_diagnostics) if ast_diagnostics is not None else 0,
+    "hint": "advisory by default; pass --gate to fail on critical tags, --strict for all",
 }
 _out(result, 0 if not fail else 1)

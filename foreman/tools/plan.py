@@ -11,6 +11,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(_HERE, "..", "..")))
 
 from foreman.log import log
+from foreman import memory as mem
 
 _start = time.time()
 
@@ -27,10 +28,6 @@ def _out(obj, code=0):
     json.dump(obj, sys.stdout, indent=2)
     log(os.path.join(target, ".foreman"), "plan.py", code, int((time.time()-_start)*1000))
     sys.exit(code)
-
-def _hash(p):
-    try: return hashlib.md5(open(p, "rb").read()).hexdigest()
-    except OSError: return ""
 
 def _read(path, label):
     if not os.path.exists(path):
@@ -57,23 +54,23 @@ def _read(path, label):
 
 prd_path = os.path.join(target, "tasks", "prd.md")
 design_path = os.path.join(target, "tasks", "design.md")
-cache_path = os.path.join(target, ".foreman", ".plan_cache.json")
-os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+watch = [prd_path, design_path]
+key_parts = [section or "", str(lines or "")]
 
-cached = {}
-if not no_cache and os.path.exists(cache_path):
-    try: cached = json.load(open(cache_path))
-    except (json.JSONDecodeError, OSError): pass
-
-key = f"{_hash(prd_path)}:{_hash(design_path)}:{section or ''}:{lines or ''}"
-if not no_cache and key in cached:
-    _out(cached[key])
+if not no_cache:
+    hit = mem.tool_cache_get(target, "plan", key_parts, watch)
+    if hit is not None:
+        hit = dict(hit)
+        hit["_cache"] = "hit"
+        _out(hit)
 
 result = {"ok": True, "project_dir": target,
           "prd": _read(prd_path, "PRD"),
           "design": _read(design_path, "design.md"),
-          "_cache_key": key}
-cached[key] = result
-try: json.dump(cached, open(cache_path, "w"), indent=2)
-except OSError: pass
+          "_cache": "miss"}
+if not no_cache:
+    try:
+        mem.tool_cache_set(target, "plan", key_parts, watch, result)
+    except OSError:
+        pass
 _out(result)

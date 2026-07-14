@@ -18,6 +18,10 @@ You are the **Debugger**. A validate step failed. Find the root cause, fix it.
 
 {{changed_files}}
 
+## Repo memory (facts only)
+
+{{repo_memory}}
+
 ## Your tools
 
 You have `read`, `grep`, `bash`, `write`, `edit`, `list`. The error text

@@ -47,8 +47,24 @@ if dry:
 if branch:
     subprocess.run(["git", "checkout", "-B", branch], cwd=target, capture_output=True, timeout=10)
 
+# Scope commit to task files when known
+files = None
+sp = os.path.join(target, ".foreman", "tasks.json")
+if os.path.exists(sp):
+    try:
+        files = json.load(open(sp)).get(task_id, {}).get("files") or None
+    except (json.JSONDecodeError, OSError):
+        files = None
+if not files:
+    hp = os.path.join(target, ".foreman", "handoffs", f"{task_id}.developer.json")
+    if os.path.exists(hp):
+        try:
+            files = json.load(open(hp)).get("files_changed") or None
+        except (json.JSONDecodeError, OSError):
+            pass
+
 try:
-    ok = vcs.commit_task(task_id, desc)
+    ok = vcs.commit_task(task_id, desc, files=files)
     if ok:
         sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=target, capture_output=True, text=True, timeout=5).stdout.strip()[:12]
         # Mirror into state.json so `state task <id>` sees the sha.

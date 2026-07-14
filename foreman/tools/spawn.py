@@ -25,6 +25,7 @@ sys.path.insert(0, _ROOT)
 
 from foreman.config import Config
 from foreman.log import log
+from foreman import memory as mem
 
 _start = time.time()
 
@@ -37,15 +38,16 @@ ROLE_FILES = {
 # Only compute placeholders the role actually uses.
 ROLE_NEEDS = {
     "architect": {"task_description", "acceptance_criteria", "sdk", "packages", "lib_files",
-                  "project_memory", "design"},
+                  "project_memory", "design", "repo_memory"},
     "developer": {"task_description", "acceptance_criteria", "architect_plan", "sdk", "packages",
-                  "project_dir"},
-    "reviewer":  {"task_description", "acceptance_criteria", "diff"},
-    "tester":    {"task_description", "acceptance_criteria", "changed_files", "project_dir", "test_plan"},
-    "debugger":  {"task_description", "changed_files", "failed_steps", "validation_error"},
-    "refactorer":{"task_description", "review_findings", "changed_files", "project_dir"},
-    "product_owner": {"prd", "design", "project_memory"},
-    "qa_lead":   {"task_description", "acceptance_criteria", "changed_files", "design"},
+                  "project_dir", "repo_memory"},
+    "reviewer":  {"task_description", "acceptance_criteria", "diff", "repo_memory"},
+    "tester":    {"task_description", "acceptance_criteria", "changed_files", "project_dir", "test_plan",
+                  "repo_memory"},
+    "debugger":  {"task_description", "changed_files", "failed_steps", "validation_error", "repo_memory"},
+    "refactorer":{"task_description", "review_findings", "changed_files", "project_dir", "repo_memory"},
+    "product_owner": {"prd", "design", "project_memory", "repo_memory"},
+    "qa_lead":   {"task_description", "acceptance_criteria", "changed_files", "design", "repo_memory"},
 }
 
 def _arg(name, default=None):
@@ -126,6 +128,8 @@ if "prd" in needs or "design" in needs:
     section = _arg("--section")
     if section:
         plan_args += ["--section", section]
+    # Prefer truncated plan for token budget
+    plan_args += ["--lines", "40"]
     plan = _run_tool("plan.py", *plan_args)
     values["prd"] = json.dumps(plan.get("prd", {}))
     values["design"] = json.dumps(plan.get("design", {}))
@@ -142,15 +146,53 @@ if "project_memory" in needs:
             pass
     values["project_memory"] = json.dumps(done)
 
+# Caps on large injects (handoff / error / diff)
+_raw_error = _arg("--error")
+_raw_diff = _arg("--diff")
+_caps = mem.inject_caps(
+    loaded_plan=loaded_plan,
+    error=_raw_error or "",
+    diff=_raw_diff or "",
+)
+loaded_plan = _caps["loaded_plan"]
+if _raw_error:
+    error_text = _caps["error"] or "(empty error)"
+else:
+    error_text = "(no error provided)"
+if _raw_diff:
+    diff_text = _caps["diff"] or "(empty diff)"
+else:
+    diff_text = "(run `git diff HEAD~1` for the diff)"
+
 values["project_dir"] = target
 values["task_description"] = _arg("--task-desc") or task_state.get("description") or f"Task {task_id or '(unspecified)'}"
 values["acceptance_criteria"] = _arg("--acceptance") or task_state.get("acceptance") or "(not specified)"
 values["architect_plan"] = _arg("--plan") or loaded_plan or "(none)"
 values["review_findings"] = loaded_plan or "(none)"
 values["test_plan"] = "(see architect plan)"
-values["diff"] = _arg("--diff") or "(run `git diff HEAD~1` for the diff)"
-values["validation_error"] = _arg("--error") or "(no error provided)"
-values["failed_steps"] = _arg("--error") or "(no error provided)"
+values["diff"] = diff_text
+values["validation_error"] = error_text
+values["failed_steps"] = error_text
+
+# Repo memory graph: retrieve only matching facts (no hallucination source)
+if "repo_memory" in needs:
+    task_files = list(task_state.get("files") or [])
+    query = " ".join([
+        values.get("task_description") or "",
+        values.get("acceptance_criteria") or "",
+        " ".join(task_files),
+    ])
+    retrieved = mem.retrieve(
+        target,
+        role=role,
+        task_id=task_id or "",
+        query=query,
+        files=task_files,
+        limit=10,
+    )
+    values["repo_memory"] = mem.format_memory_block(retrieved)
+else:
+    values["repo_memory"] = ""
 
 # ---- Fill template ----------------------------------------------------------
 filled = template
@@ -160,8 +202,15 @@ def _cond(m):
     v = values.get(var, "")
     return body if (v and v not in ("(none)", "[]", "{}")) else ""
 filled = re.sub(r"\{\{#(\w+)\}\}(.*?)\{\{/\1\}\}", _cond, filled, flags=re.DOTALL)
+# Drop empty repo memory section before placeholder fill
+if not values.get("repo_memory"):
+    filled = re.sub(
+        r"\n## Repo memory \(facts only\)\n\n\{\{repo_memory\}\}\n?",
+        "\n",
+        filled,
+    )
 for k, v in values.items():
-    filled = filled.replace("{{" + k + "}}", v)
+    filled = filled.replace("{{" + k + "}}", v if v is not None else "")
 missing = re.findall(r"\{\{(\w+)\}\}", filled)
 
 # ---- Optional: append self-handoff instruction ------------------------------
@@ -192,6 +241,12 @@ else:
     result = {"ok": True, "role": role, "task_id": task_id, "prompt": filled}
     if missing:
         result["missing"] = missing
+from foreman import ui
+tok = result.get("estimated_tokens")
+if tok is None and "prompt" in result:
+    tok = len(result["prompt"]) // 4
+ui.spawn_view(role, task_id, True, tokens=tok)
 json.dump(result, sys.stdout, indent=2)
+print()
 log(os.path.join(target, ".foreman"), "spawn.py", 0, int((time.time()-_start)*1000),
     extra={"role": role, "task_id": task_id, "prompt_bytes": len(filled)})

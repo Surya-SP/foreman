@@ -1,22 +1,28 @@
 ---
-description: Autonomously ship the Flutter app using the Foreman agent (task DAG + role sub-agents).
+description: Ship or discover with Foreman (ready gate → autonomous build).
 agent: foreman
 ---
 
-Ship this project with Foreman. Work autonomously until the task DAG is empty or blocked.
+Foreman session. Project root is the current workspace.
 
-Project root is the current workspace. Follow your system instructions exactly.
+You are orchestrator only (`edit` denied). All code via spawn → Task(subagent) → handoff.
 
-Startup checklist:
-0. `export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"` (OpenCode often lacks ~/.local/bin)
-1. `foreman doctor` — fix critical failures first
-2. `foreman next` — see brief + ready tasks
-3. If no tasks: seed via `foreman state template todo` (or product_owner → import from PRD)
-4. For each ready task: run the full pipeline (architect → qa_lead → developer → tester → validate → reviewer → commit → state done)
-5. On validate fail: debugger ≤3 then rollback+fail
-6. On CHANGES_REQUIRED: refactorer then re-validate
-7. Loop with `foreman state resume` until nothing ready
+Startup:
+0. `export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"`
+1. `foreman doctor` — fix critical failures
+2. `foreman ready` — **GATE**
+   - If not ready: **Phase A Discovery only** — question user, then `foreman discover ...`, re-check ready. Do not ship.
+   - If ready: **Phase B Ship** below
+
+Phase B Ship:
+3. `foreman next` — ready tasks
+4. If no tasks: `foreman state template todo` or product_owner → import
+5. Each task: `foreman state plan T` → only `remaining_roles` → validate → (verify advisory) → reviewer → **commit** → state done
+6. Validate fail: debugger ≤3 then `foreman rollback --task-id T` then fail
+7. CHANGES_REQUIRED: refactorer → re-validate
+8. Loop `foreman state resume` until nothing ready
+9. Never `--force`. Never hard rollback. Never edit lib/test yourself.
 
 User notes: $ARGUMENTS
 
-Do not wait for me between steps. Report progress as you complete each task. Only stop for deploy choices, escalations, or missing PRD/design.
+Do not wait between ship steps. Only stop for deploy, escalations, or discovery questions.

@@ -16,6 +16,8 @@ sys.path.insert(0, _ROOT)
 
 from foreman.log import log
 from foreman.schemas import check
+from foreman import memory as mem
+from foreman.jsonutil import extract_json_object
 
 _start = time.time()
 
@@ -41,16 +43,11 @@ if "--stdin" in sys.argv:
 if not data:
     _out({"ok": False, "message": "No data (use --data or --stdin)"}, 1)
 
-# Extract outermost JSON block from possibly-fenced sub-agent output.
-m = re.search(r"\{.*\}", data, flags=re.DOTALL)
-if not m:
-    _out({"ok": False, "message": "No JSON object found in input"}, 1)
-raw = m.group(0)
-
-try:
-    obj = json.loads(raw)
-except json.JSONDecodeError as e:
-    _out({"ok": False, "message": f"Invalid JSON: {e}", "raw_preview": raw[:200]}, 1)
+# Balanced JSON extract (no greedy DOTALL)
+obj, raw_or_err = extract_json_object(data)
+if obj is None:
+    _out({"ok": False, "message": raw_or_err, "raw_preview": (data or "")[:200]}, 1)
+raw = raw_or_err
 
 errors = check(role, obj)
 forced = False
@@ -114,6 +111,16 @@ if os.path.exists(state_path):
         with open(state_path, "w") as f:
             json.dump(state_all, f, indent=2)
 
+# ─── Memory graph: record decisions + file edges (facts only) ───────────────
+memory_rec = {}
+try:
+    memory_rec = mem.record_handoff(target, task_id, role, obj, path)
+except Exception as e:
+    memory_rec = {"ok": False, "message": str(e)}
+
+from foreman import ui
+rel = os.path.relpath(path, target) if path.startswith(target) else path
+ui.handoff_view(role, task_id, True, path=rel)
 _out({"ok": True, "path": path, "bytes": os.path.getsize(path),
       "schema_errors": errors, "forced": forced, "overwrote_previous": overwrote,
-      "state_updates": state_updates}, 0)
+      "state_updates": state_updates, "memory": memory_rec}, 0)

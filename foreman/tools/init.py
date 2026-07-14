@@ -20,6 +20,10 @@ target = os.path.abspath(_arg("--project") or os.environ.get("FOREMAN_PROJECT") 
 cfg = Config(project_dir=target)
 
 ok, msgs = ensure_format(cfg)
-json.dump({"ok": ok, "messages": msgs}, sys.stdout)
+result = {"ok": ok, "messages": msgs}
+from foreman import ui
+ui.init_view(result)
+json.dump(result, sys.stdout, indent=2)
+print()
 log(os.path.join(target, ".foreman"), "init.py", 0 if ok else 1, int((time.time()-_start)*1000))
 sys.exit(0 if ok else 1)
