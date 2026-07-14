@@ -199,7 +199,6 @@ case "$cmd" in
     ;;
 
   next|status)
-    # Human blocks on stderr; JSON on stdout (agent-safe)
     brief=$(python3 "$TOOLS/project_info.py" --project "$PROJECT" --brief 2>/dev/null || echo "?")
     ready=$(python3 "$TOOLS/state.py" --project "$PROJECT" --ready 2>/dev/null || echo '{"ok":false}')
     total=$(python3 "$TOOLS/state.py" --project "$PROJECT" 2>/dev/null || echo '{"total":0}')
@@ -207,6 +206,9 @@ case "$cmd" in
 import json, sys, os
 sys.path.insert(0, os.environ["FOREMAN_HOME"])
 from foreman import ui
+from foreman.readiness import assess as assess_ready
+from foreman.design_gate import assess_design
+from foreman.log import metrics_summary
 try:
     r = json.loads(sys.argv[1])
 except Exception:
@@ -216,12 +218,20 @@ try:
 except Exception:
     t = {"total": 0}
 brief = sys.argv[3] if len(sys.argv) > 3 else "?"
+proj = os.environ.get("FOREMAN_PROJECT") or "."
+prod = assess_ready(proj)
+des = assess_design(proj)
+met = metrics_summary(os.path.join(proj, ".foreman"))
 n = r.get("count", 0)
 tot = t.get("total", 0)
-if tot == 0:
-    guide = "Nothing planned yet. Run: foreman run   (or edit tasks/prd.md + design.md first)"
+if not prod.get("ready"):
+    guide = "WAITING FOR: product docs — foreman discover && foreman ready"
+elif not des.get("approved"):
+    guide = "WAITING FOR: design approve — foreman design show && foreman design approve && foreman run"
+elif tot == 0:
+    guide = "Product+design ready. Run: foreman run"
 elif n == 0:
-    guide = "No open work right now (done or waiting). Run: foreman run to resume"
+    guide = "No open tasks (done or blocked). foreman run to resume or foreman report --write"
 else:
     tid = r["tasks"][0]["id"]
     guide = f"Ready to build next: {tid}. Run: foreman run"
@@ -229,6 +239,10 @@ data = {
     "brief": brief.strip(),
     "ready": r,
     "total_tasks": tot,
+    "product_ready": prod.get("ready"),
+    "design_approved": des.get("approved"),
+    "design_status": des.get("status"),
+    "handoff_success_rate": met.get("handoff_success_rate"),
     "guidance": guide,
     "how_to_run": "foreman run",
 }
@@ -246,6 +260,10 @@ proj = sys.argv[2]
 md = os.path.join(proj, ".foreman")
 print(json.dumps(metrics_summary(md), indent=2))
 PY
+    ;;
+
+  report)
+    exec python3 "$TOOLS/report.py" --project "$PROJECT" "$@"
     ;;
 
   log)
@@ -399,7 +417,8 @@ foreman — agent / advanced commands (used by the AI, not day-to-day)
   validate | verify | commit | rollback --task-id T
   ready | discover | execute [--mock|--task-id T|--template todo]
   design status|show|run|approve|reject
-  metrics                         # handoff success rates
+  metrics                         # handoff / role_session proxies
+  report [--write] [--live]       # field-report draft (not live proof unless human fills)
   info | plan | log | debt | memory …
   branch <name> | pr "<title>"
   deploy list | deploy install --device <id>
@@ -432,7 +451,8 @@ Everyday commands
   foreman discover           Interactive product brainstorm → PRD + design
   foreman ready              Check if product docs are complete
   foreman design run|show|approve   Design language (human review; show --open)
-  foreman metrics            Handoff success rates
+  foreman metrics            Handoff / role session proxies
+  foreman report [--write]   Field-report draft from local state
   foreman run                Discover/design gates, then autonomous OpenCode ship
   foreman execute            Hard loop: OpenCode role agents per task step
   foreman status             What is left to do

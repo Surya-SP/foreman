@@ -50,4 +50,20 @@ Common causes: model prose without JSON, wrong role agent install, PATH missing 
 
 ## Field proof
 
-After a real ship, fill [FIELD_REPORT.md](FIELD_REPORT.md). Without it, reliability claims are unproven.
+After a real ship:
+
+```bash
+foreman report --write          # auto-draft from .foreman state
+# then complete human sections in .foreman/field_report_DRAFT.md
+# or copy into FIELD_REPORT.md
+```
+
+Without a human-completed live report, reliability claims are unproven.
+
+## Metrics
+
+```bash
+foreman metrics                 # handoff_success_rate, role_session counts
+```
+
+`role_session` events are cost/latency **proxies**, not provider dollars.

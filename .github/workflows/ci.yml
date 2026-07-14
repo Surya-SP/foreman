@@ -14,7 +14,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Unit + integration tests
+      - name: Unit + integration tests (plumbing)
         run: python3 tests/test_tools.py
-      - name: Golden e2e (mock OpenCode roles)
-        run: python3 tests/test_e2e_mock.py
+      - name: Golden e2e MOCK only (no live OpenCode / no real Flutter validate)
+        run: |
+          echo "::notice::This e2e uses --mock. It does NOT prove live ship quality."
+          python3 tests/test_e2e_mock.py

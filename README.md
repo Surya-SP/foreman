@@ -62,8 +62,14 @@ foreman run               # autonomous: OpenCode per role until DAG empty
 **TUI:** `opencode --agent foreman` then `/ship`.  
 **Default ship mode:** hard `execute` loop (not freeform chat). Legacy: `foreman run --agent-loop`.
 
-After a real ship, fill [docs/FIELD_REPORT.md](docs/FIELD_REPORT.md).  
-Operational limits: [docs/KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md).
+After a real ship:
+
+```bash
+foreman report --write    # draft from state + metrics
+# complete human sections → see docs/FIELD_REPORT.md
+```
+
+Limits: [docs/KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md).
 
 ---
 
@@ -78,6 +84,8 @@ Operational limits: [docs/KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md).
 | `foreman status` | Progress |
 | `foreman doctor` | Install / PATH |
 | `foreman deploy list\|install` | Devices |
+| `foreman metrics` | Handoff / role-session proxies |
+| `foreman report --write` | Field-report draft (not live proof alone) |
 | `foreman demo` | Terminal UX mock |
 | `foreman help` | This guide |
 

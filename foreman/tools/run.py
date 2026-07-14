@@ -193,13 +193,36 @@ if not use_legacy_agent:
         mock=False,
         force=force_ship,
     )
+    # Loud design wait
+    if result.get("waiting_for") == "design_approve" or result.get("phase") == "design":
+        from foreman import ui as _ui
+        cmds = result.get("next_commands") or [
+            "foreman design show", "foreman design approve", "foreman run",
+        ]
+        _ui.block(
+            "WAITING FOR: design approve",
+            command=cmds[0] if cmds else "foreman design show",
+            detail="\n".join(f"$ {c}" for c in cmds),
+            footer=result.get("preview_path") or "foreman design show",
+        )
+        _out({
+            "ok": False,
+            "phase": "design",
+            "waiting_for": "design_approve",
+            "mode": "execute",
+            "project": target,
+            "result": result,
+            "next_commands": cmds,
+            "hint": " && ".join(cmds),
+        }, 2)
     _out({
         "ok": bool(result.get("ok")),
-        "phase": "ship",
+        "phase": result.get("phase") or "ship",
         "mode": "execute",
         "project": target,
         "result": result,
-        "hint": "Resume: foreman run   |   single task: foreman execute --task-id T",
+        "cost_proxy": result.get("cost_proxy"),
+        "hint": "Resume: foreman run   |   report: foreman report --write   |   metrics: foreman metrics",
     }, 0 if result.get("ok") else 1)
 
 # Legacy: freeform OpenCode tech-lead agent loop

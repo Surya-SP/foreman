@@ -72,10 +72,10 @@ def _opencode_role(
     dry: bool = False,
 ) -> tuple[int, str]:
     """Run one OpenCode session as a role subagent. Returns (exit, combined_output)."""
+    from foreman.log import metric
     opencode = shutil.which("opencode")
     if not opencode:
         return 127, "opencode not found on PATH"
-    # Instruct role agent: do work, print JSON, self-handoff if possible
     body = (
         prompt
         + "\n\n## Executor contract\n"
@@ -95,7 +95,9 @@ def _opencode_role(
         cmd.extend(["--model", model])
     cmd.append(body)
     if dry:
+        metric(_mem_dir(project), "role_session", role=role, dry=True, model=model or "")
         return 0, "DRY:" + " ".join(cmd[:8])
+    t0 = time.time()
     try:
         r = subprocess.run(
             cmd, cwd=project, capture_output=True, text=True,
@@ -103,10 +105,17 @@ def _opencode_role(
             env={**os.environ, "FOREMAN_PROJECT": project},
         )
         combined = (r.stdout or "") + "\n" + (r.stderr or "")
+        metric(
+            _mem_dir(project), "role_session",
+            role=role, exit=r.returncode, ms=int((time.time() - t0) * 1000),
+            model=model or "", prompt_chars=len(prompt),
+        )
         return r.returncode, combined
     except subprocess.TimeoutExpired:
+        metric(_mem_dir(project), "role_session", role=role, exit=124, ms=OPENCODE_TIMEOUT * 1000, model=model or "")
         return 124, "opencode role session timed out"
     except OSError as e:
+        metric(_mem_dir(project), "role_session", role=role, exit=1, error=str(e))
         return 1, str(e)
 
 
@@ -597,11 +606,20 @@ def execute_project(
             # still stop on hard mock failure
             return {"ok": False, "phase": "ship", "seed": seed, "completed": results, "failed": tid}
 
+    from foreman.log import metrics_summary
+    ms = metrics_summary(_mem_dir(project))
+    role_sessions = (ms.get("by_kind") or {}).get("role_session", 0)
     return {
         "ok": True,
         "phase": "ship",
         "seed": seed,
         "tasks_run": n,
         "results": results,
+        "cost_proxy": {
+            "role_sessions": role_sessions,
+            "handoff_success_rate": ms.get("handoff_success_rate"),
+            "handoff_miss": ms.get("handoff_miss"),
+            "note": "proxy only — not provider $; see foreman metrics",
+        },
         "message": "DAG empty or max tasks reached" if n else "no ready tasks",
     }

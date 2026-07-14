@@ -2,6 +2,15 @@
 
 Use this after a **real** `discover → ready → design approve → run` (not `--mock`).
 
+**Bootstrap a draft from local state:**
+
+```bash
+foreman report --write
+# edit .foreman/field_report_DRAFT.md — fill human sections
+```
+
+Auto-draft alone is **not** live-ship proof.
+
 ## Environment
 
 | Item | Value |

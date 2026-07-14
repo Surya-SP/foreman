@@ -7,15 +7,28 @@ import re
 from .config import Config
 from .proc import run_command, which
 
-_SKIP_NAMES = {".env", ".env.local", "credentials.json", "service-account.json", "id_rsa", "id_ed25519"}
-_SKIP_PARTS = (".env", "secrets/", "credentials", ".pem", "google-services.json")
+_SKIP_NAMES = {
+    ".env", ".env.local", ".env.production", ".env.development",
+    "credentials.json", "service-account.json", "id_rsa", "id_ed25519",
+    "id_rsa.pub", "google-services.json", "GoogleService-Info.plist",
+    "keystore.jks", "release.keystore", "firebase-adminsdk.json",
+    "aws_credentials", "secrets.yaml", "secrets.yml",
+}
+_SKIP_PARTS = (
+    ".env", "secrets/", "credentials", ".pem", "google-services.json",
+    ".p12", ".mobileprovision", "key.properties",
+)
+_SKIP_SUFFIXES = (".pem", ".p12", ".jks", ".keystore", ".mobileprovision")
 # Content patterns in staged files
 _SECRET_CONTENT = re.compile(
     r"(?i)(api[_-]?key\s*[:=]\s*['\"]?[A-Za-z0-9_\-]{16,}"
     r"|secret[_-]?key\s*[:=]"
     r"|BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY"
     r"|AKIA[0-9A-Z]{16}"
-    r"|password\s*[:=]\s*['\"][^'\"]{8,})"
+    r"|password\s*[:=]\s*['\"][^'\"]{8,}"
+    r"|ghp_[A-Za-z0-9]{20,}"
+    r"|sk_live_[A-Za-z0-9]{16,}"
+    r"|xox[baprs]-[A-Za-z0-9-]{10,})"
 )
 
 
@@ -41,7 +54,13 @@ class Vcs:
         base = os.path.basename(p)
         if base in _SKIP_NAMES:
             return False
+        if any(p.endswith(s) or base.endswith(s) for s in _SKIP_SUFFIXES):
+            return False
         if any(s in p for s in _SKIP_PARTS):
+            return False
+        # path segments
+        parts = p.replace("\\", "/").split("/")
+        if any(seg.startswith(".env") for seg in parts):
             return False
         return True
 

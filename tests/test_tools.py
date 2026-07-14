@@ -528,6 +528,30 @@ def test_metrics_handoff():
         assert s["handoff_success_rate"] == 0.5
 
 
+def test_report_draft():
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+    from foreman.report import build_report, render_markdown
+    from foreman.readiness import write_specs
+    with tempfile.TemporaryDirectory() as t:
+        open(os.path.join(t, "pubspec.yaml"), "w").write("name: x\n")
+        write_specs(
+            t,
+            "# Product Requirements\n\n## Goal\n"
+            "A polished notes app for students who need offline capture of lectures.\n\n"
+            "## Core Features\n- Create note\n- Edit note\n- Search notes\n\n"
+            "## Users\nStudents\n\n## Constraints\n- Platforms: iOS, Android\n",
+            "# Design\n\n## Color\n- Primary: #4CAF50\n\n## HomeScreen\n- List + FAB\n"
+            "- Empty state\n",
+        )
+        data = build_report(t, _ROOT, live=False)
+        assert data.get("live_ship") is False
+        assert data.get("warning")
+        md = render_markdown(data)
+        assert "auto-draft" in md.lower() or "AUTO-DRAFT" in md
+        assert "Product ready" in md or "product_ready" in str(data)
+
+
 def test_secret_guard_blocks_env():
     if _ROOT not in sys.path:
         sys.path.insert(0, _ROOT)
@@ -1457,6 +1481,7 @@ if __name__ == "__main__":
         ("secret guard", test_secret_guard_blocks_env),
         ("design check tokens", test_design_check_tokens),
         ("metrics handoff", test_metrics_handoff),
+        ("report draft", test_report_draft),
         ("state done --force overrides", test_state_done_force_overrides),
         ("debt harvest markers", test_debt_harvest),
         ("debt skips build/", test_debt_skips_build_and_pycache),
