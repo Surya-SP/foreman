@@ -6,7 +6,11 @@ import os
 
 from .config import Config
 from .models import ValidationResult, ValidationStep
-from .proc import run_command
+from .proc import run_command, which
+
+
+def which_flutter() -> bool:
+    return which("flutter") is not None
 
 
 def _has_tests(project: str) -> bool:
@@ -38,6 +42,13 @@ def validate(config: Config, *, coverage: bool = False, min_coverage: float = 0.
     if not os.path.exists(os.path.join(project, "pubspec.yaml")):
         return ValidationResult(ok=False, steps=[ValidationStep("project-check", ok=False,
                                                                  output=f"No pubspec.yaml in {project}")])
+
+    # Preflight: missing SDK is environment, not app bug (don't thrash debugger)
+    if not which_flutter():
+        return ValidationResult(ok=False, steps=[ValidationStep(
+            "sdk-preflight", ok=False,
+            output="flutter not on PATH — install Flutter SDK; this is not an app defect",
+        )])
 
     pipeline = [
         (["flutter", "pub", "get"], "flutter pub get", 300, True),

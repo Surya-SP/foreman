@@ -4,6 +4,7 @@ from __future__ import annotations
 # Required top-level keys per role. Extra keys allowed.
 ROLE_SCHEMAS: dict[str, list[str]] = {
     "product_owner": ["role", "tasks"],
+    "designer":      ["role", "mockups", "design_language_md", "status"],
     "architect":     ["role", "approach", "files"],
     "developer":     ["role", "files_changed"],
     "qa_lead":       ["role", "test_strategy"],

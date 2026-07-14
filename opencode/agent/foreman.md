@@ -57,10 +57,26 @@ foreman discover --goal "..." --features "A;B;C" --name "..." --screens "Home;Se
 foreman ready   # must pass
 ```
 
-## Phase B — Autonomous ship (only after ready)
+## Phase B — Design language (human gate)
 
 ```bash
-foreman next
+foreman design status
+# if not approved:
+foreman design run          # spawn designer (OpenCode) → mockups + draft
+foreman design show         # human reviews wireframes
+# STOP and wait for human:
+#   foreman design approve  → writes tasks/design_language.md
+#   foreman design reject   → re-run design run
+```
+
+**Do not implement** until `foreman design status` shows approved.  
+Other roles **must** follow `tasks/design_language.md`.
+
+## Phase C — Autonomous ship (only after ready + design approved)
+
+```bash
+foreman execute             # preferred hard loop (OpenCode per role)
+# or: foreman next && manual spawn loop
 foreman state all
 ```
 

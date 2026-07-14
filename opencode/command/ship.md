@@ -10,18 +10,14 @@ You are orchestrator only (`edit` denied). All code via spawn → Task(subagent)
 Startup:
 0. `export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"`
 1. `foreman doctor` — fix critical failures
-2. `foreman ready` — **GATE**
-   - If not ready: **Phase A Discovery only** — question user, then `foreman discover ...`, re-check ready. Do not ship.
-   - If ready: **Phase B Ship** below
-
-Phase B Ship:
-3. `foreman next` — ready tasks
-4. If no tasks: `foreman state template todo` or product_owner → import
-5. Each task: `foreman state plan T` → only `remaining_roles` → validate → (verify advisory) → reviewer → **commit** → state done
+2. `foreman ready` — product GATE
+   - If not ready: discovery only (`question` + `foreman discover`). Do not ship.
+3. `foreman design status` — design GATE
+   - If not approved: `foreman design run`, show mockups, **wait for human** `foreman design approve`
+4. Prefer bash: `foreman execute` (Python loop of `opencode run --agent <role>`)
+5. Or manual: plan → spawn → Task → handoff → validate → commit → done
 6. Validate fail: debugger ≤3 then `foreman rollback --task-id T` then fail
-7. CHANGES_REQUIRED: refactorer → re-validate
-8. Loop `foreman state resume` until nothing ready
-9. Never `--force`. Never hard rollback. Never edit lib/test yourself.
+7. Never `--force`. Never hard rollback. Never edit lib/test yourself.
 
 User notes: $ARGUMENTS
 

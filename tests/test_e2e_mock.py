@@ -50,7 +50,7 @@ def main():
         rc, out, _ = run([sys.executable, os.path.join(TOOLS, "ready.py"), "--project", t], t)
         assert rc == 0, out
 
-        # execute mock (Python loop + mock handoffs; no opencode)
+        # execute mock (designer auto-approved in mock, then roles)
         rc, out, err = run([
             sys.executable, os.path.join(TOOLS, "execute.py"),
             "--project", t, "--template", "todo", "--mock", "--max-tasks", "12",
@@ -59,6 +59,7 @@ def main():
         result = json.loads(out)
         assert result.get("ok") is True, result
         assert result.get("tasks_run", 0) >= 1, result
+        assert os.path.exists(os.path.join(t, "tasks", "design_language.md")), "design language missing"
 
         # all done or no ready left
         rc, out, _ = run([sys.executable, os.path.join(TOOLS, "state.py"), "--project", t, "--ready"], t)

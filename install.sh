@@ -19,7 +19,7 @@ Usage: $0 [--global-only | /path/to/project]
   (no args) / --global-only
       Install once for all projects:
         ~/.local/bin/foreman
-        ~/.config/opencode/agent/*.md      (foreman + 8 roles)
+        ~/.config/opencode/agent/*.md      (foreman + 9 roles)
         ~/.config/opencode/command/ship.md
         ~/.config/opencode/skill/foreman/
 
@@ -130,14 +130,15 @@ Done. Global install is enough for every project.
 Ensure PATH:
   export PATH="\$HOME/.local/bin:\$PATH"
 
-Build an app:
+Build an app (any path — not inside this repo):
   flutter create my_app && cd my_app
   foreman doctor
-  foreman discover    # interactive product brainstorm
-  foreman ready       # must pass
-  foreman run         # autonomous ship
+  foreman discover
+  foreman ready
+  foreman design run && foreman design show && foreman design approve
+  foreman run
 
-Flow: discover → ready → run
+Flow: discover → ready → design approve → run
 Agent tools: foreman help --agent
 
 EOF

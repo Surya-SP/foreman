@@ -43,6 +43,21 @@ case "$cmd" in
   ready)    exec python3 "$TOOLS/ready.py"        --project "$PROJECT" "$@" ;;
   discover) exec python3 "$TOOLS/discover.py"     --project "$PROJECT" "$@" ;;
   execute)  exec python3 "$TOOLS/execute.py"      --project "$PROJECT" "$@" ;;
+  design)
+    sub="${1:-status}"; shift || true
+    case "$sub" in
+      status|"") exec python3 "$TOOLS/design.py" --project "$PROJECT" --status "$@" ;;
+      show)      exec python3 "$TOOLS/design.py" --project "$PROJECT" --show "$@" ;;
+      run)       exec python3 "$TOOLS/design.py" --project "$PROJECT" --run "$@" ;;
+      approve)   exec python3 "$TOOLS/design.py" --project "$PROJECT" --approve "$@" ;;
+      reject)
+        reason="${1:-}"; [ -n "${1:-}" ] && shift || true
+        exec python3 "$TOOLS/design.py" --project "$PROJECT" --reject ${reason:+"$reason"} "$@" ;;
+      *)
+        echo '{"ok":false,"message":"unknown design subcommand","hint":"foreman design status|show|run|approve|reject"}'
+        exit 2 ;;
+    esac
+    ;;
   memory)
     sub="${1:-stats}"; shift || true
     case "$sub" in
@@ -86,7 +101,7 @@ case "$cmd" in
 
   spawn)
     if [ -z "${1:-}" ]; then
-      echo '{"ok":false,"message":"spawn requires a role","hint":"foreman spawn <role> [task_id]   roles: product_owner|architect|qa_lead|developer|tester|reviewer|refactorer|debugger","note":"spawn only prints a prompt — use foreman run or the OpenCode foreman agent to execute"}'
+      echo '{"ok":false,"message":"spawn requires a role","hint":"foreman spawn <role> [task_id]   roles: product_owner|designer|architect|qa_lead|developer|tester|reviewer|refactorer|debugger","note":"spawn only prints a prompt — use foreman run or the OpenCode foreman agent to execute"}'
       exit 2
     fi
     role="$1"; shift
@@ -274,11 +289,12 @@ checks = []
 def c(name, ok, detail=""):
     checks.append({"check": name, "ok": bool(ok), "detail": detail})
 c("FOREMAN_HOME", os.path.isdir(os.path.join(home, "foreman", "tools")), home)
-c("prompts/roles", len(os.listdir(os.path.join(home, "prompts", "roles"))) == 8, "expect 8 role files")
+role_files = [f for f in os.listdir(os.path.join(home, "prompts", "roles")) if f.endswith(".txt")]
+c("prompts/roles", len(role_files) >= 9, f"expect ≥9 role files (have {len(role_files)})")
 c("opencode/agent/foreman.md", os.path.exists(os.path.join(home, "opencode", "agent", "foreman.md")))
-role_agents = ["product_owner","architect","qa_lead","developer","tester","reviewer","refactorer","debugger"]
+role_agents = ["product_owner","designer","architect","qa_lead","developer","tester","reviewer","refactorer","debugger"]
 have_roles = sum(1 for r in role_agents if os.path.exists(os.path.join(home, "opencode", "agent", f"{r}.md")))
-c("opencode role agents", have_roles == 8, f"{have_roles}/8")
+c("opencode role agents", have_roles == 9, f"{have_roles}/9")
 c("opencode/command/ship.md", os.path.exists(os.path.join(home, "opencode", "command", "ship.md")))
 c("templates", len([f for f in os.listdir(os.path.join(home, "templates")) if f.endswith(".json")]) >= 3, "expect >=3 JSON templates")
 c("python3", shutil.which("python3") is not None)
@@ -370,11 +386,12 @@ foreman — agent / advanced commands (used by the AI, not day-to-day)
 
   validate | verify | commit | rollback --task-id T
   ready | discover | execute [--mock|--task-id T|--template todo]
+  design status|show|run|approve|reject
   info | plan | log | debt | memory …
   branch <name> | pr "<title>"
   deploy list | deploy install --device <id>
 
-Prefer: foreman discover → ready → run
+Prefer: foreman discover → ready → design approve → run
 EOF
     else
       cat <<EOF
@@ -394,23 +411,25 @@ Build an app (outside the foreman repo — any Flutter project)
   1. flutter create my_app && cd my_app
   2. foreman doctor
   3. foreman discover        # interactive PRD + design
-  4. foreman ready           # must pass
-  5. foreman run             # autonomous OpenCode ship
+  4. foreman ready           # product docs gate
+  5. foreman design run && foreman design show && foreman design approve
+  6. foreman run             # autonomous OpenCode ship
 
 Everyday commands
   foreman discover           Interactive product brainstorm → PRD + design
   foreman ready              Check if product docs are complete
-  foreman run                Discover if needed, else autonomous OpenCode ship
+  foreman design run|show|approve   Design language (human review)
+  foreman run                Discover/design gates, then autonomous OpenCode ship
   foreman execute            Hard loop: OpenCode role agents per task step
   foreman status             What is left to do
   foreman doctor             Fix install / PATH problems
   foreman init               Empty PRD + design templates
-  foreman deploy list        List phones / simulators
-  foreman deploy install --device <id>
+  foreman deploy list|install
   foreman demo               Preview terminal look (mock)
 
 Flow
-  discover → ready → run (execute drives opencode --agent <role>)
+  discover → ready → design approve → run
+  (run = OpenCode --agent <role> per step)
 
 Tips
   • Restart OpenCode after install

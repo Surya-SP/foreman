@@ -12,6 +12,10 @@ You are the **Reviewer**. Read the changes, flag issues. Edit nothing.
 
 {{acceptance_criteria}}
 
+## Approved design language (STRICT)
+
+{{design_language}}
+
 ## Repo memory (facts only)
 
 {{repo_memory}}

@@ -80,6 +80,7 @@ try:
                 pass
         _out({"ok": True, "task_id": task_id, "sha": sha, "branch": branch or "current", "desc": desc[:80]}, 0)
     else:
-        _out({"ok": False, "message": "Nothing to commit"}, 1)
+        err = getattr(vcs, "last_error", "") or "Nothing to commit"
+        _out({"ok": False, "message": err}, 1)
 except Exception as e:
     _out({"ok": False, "message": f"Commit failed: {e}"}, 1)

@@ -1,17 +1,21 @@
 # Foreman
 
-**Describe a polished product. Foreman builds the Flutter app.**
+**OpenCode multi-agent pipeline for Flutter, with durable task state.**
 
-Two phases:
+Foreman does **not** call LLMs itself. It:
 
-1. **Discover** (interactive) — brainstorm until PRD + design are solid  
-2. **Ship** (autonomous) — agent team builds, tests, reviews, commits  
+1. Helps you define a product (`discover` → `ready`)
+2. Produces a **design language** for human review (`design`)
+3. Runs a **Python control loop** that starts **OpenCode role agents**  
+   (`opencode run --agent architect|developer|…`) until the task graph is done
 
-You do not need a huge CLI. Day to day:
+Quality still depends on your **model**, **PRD**, and **OpenCode**. Weak models will stall; re-run `foreman run`.
 
 ```text
-foreman discover  →  foreman ready  →  foreman run
+foreman discover → ready → design approve → run
 ```
+
+App lives **outside** the Foreman repo (`flutter create` anywhere).
 
 ---
 
@@ -20,11 +24,9 @@ foreman discover  →  foreman ready  →  foreman run
 | Tool | Why |
 |------|-----|
 | [Flutter](https://docs.flutter.dev/get-started) | App project |
-| [OpenCode](https://opencode.ai) | AI agents |
-| Python 3 | Foreman tools |
+| [OpenCode](https://opencode.ai) | Role agents |
+| Python 3 | Foreman CLI |
 | git | Commits / resume |
-
-Use a **capable model** in OpenCode for shipping. Weak models may stop early — re-run `foreman run`.
 
 ---
 
@@ -43,124 +45,78 @@ Restart OpenCode after install.
 
 ## Build an app
 
-### 1. Flutter project
-
 ```bash
-flutter create my_app
-cd my_app
+flutter create my_app && cd my_app
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 foreman doctor
+foreman discover          # product brainstorm → tasks/prd.md + design.md
+foreman ready             # must pass
+foreman design run        # OpenCode designer: mockups + draft language
+foreman design show       # review wireframes
+foreman design approve    # writes tasks/design_language.md (STRICT for other roles)
+foreman run               # autonomous: OpenCode per role until DAG empty
 ```
 
-### 2. Discover (interactive product design)
+**Resume:** `foreman run` again.  
+**TUI:** `opencode --agent foreman` then `/ship`.  
+**Default ship mode:** hard `execute` loop (not freeform chat). Legacy: `foreman run --agent-loop`.
 
-```bash
-foreman discover
-```
-
-Answer in plain language: goal, features, screens, colors.  
-This writes `tasks/prd.md` and `tasks/design.md`.
-
-Non-interactive:
-
-```bash
-foreman discover \
-  --goal "Todo app for busy people" \
-  --features "Add todo;Mark done;Delete" \
-  --name Todos \
-  --screens "HomeScreen" \
-  --primary "#2196F3"
-```
-
-### 3. Gate — must pass before ship
-
-```bash
-foreman ready
-```
-
-If this fails, keep refining docs (or re-run `discover`).  
-**Autonomous build will not start until ready passes.**
-
-### 4. Ship (autonomous — still OpenCode)
-
-```bash
-foreman run
-```
-
-Same: `foreman ship` / `foreman execute`.
-
-What happens after `ready` passes:
-
-1. Seed task list if empty  
-2. For each ready task: `state plan` → only needed roles  
-3. Each role: **`opencode run --agent <role>`** (real OpenCode session)  
-4. handoff → validate → commit → next task  
-
-Python owns the loop; **every role still runs inside OpenCode**.  
-If docs are incomplete, `foreman run` opens **discovery** first.
-
-Resume:
-
-```bash
-foreman run
-```
-
-TUI alternative: `opencode --agent foreman` then `/ship`.
+After a real ship, fill [docs/FIELD_REPORT.md](docs/FIELD_REPORT.md).
 
 ---
 
 ## Everyday commands
 
-| Command | What it does |
-|---------|----------------|
-| `foreman discover` | Brainstorm → write PRD + design |
-| `foreman ready` | Gate: are docs shippable? |
-| `foreman run` | Discover if needed, else autonomous build |
+| Command | Purpose |
+|---------|---------|
+| `foreman discover` | PRD + design docs |
+| `foreman ready` | Product-doc gate |
+| `foreman design run\|show\|approve\|reject` | Design language + human gate |
+| `foreman run` / `execute` | Autonomous OpenCode ship |
 | `foreman status` | Progress |
 | `foreman doctor` | Install / PATH |
-| `foreman init` | Empty templates only |
-| `foreman deploy list` / `install` | Devices |
-| `foreman demo` | Terminal UX preview |
+| `foreman deploy list\|install` | Devices |
+| `foreman demo` | Terminal UX mock |
 | `foreman help` | This guide |
 
-Agent internals: `foreman help --agent` (you usually ignore these).
+Agent tools: `foreman help --agent`.
 
 ---
 
-## Safety (hard rules)
+## Safety rails
 
 | Rule | Behavior |
 |------|----------|
-| Tech Lead cannot edit app code | OpenCode `edit: deny` on primary agent |
-| Ship only when ready | `foreman ready` gate on `run` |
-| Hard role loop | `foreman execute` / `run` drives OpenCode per role |
-| Done requires commit | `state done` blocked without `commit_sha` |
-| Scoped commit | Task files / `lib`+`test` — not blind `git add -A` |
-| Scoped rollback | `foreman rollback --task-id T` only |
-| Verify advisory | Design-drift heuristic does not block by default |
-| Sub-agents implement | All code via OpenCode role agents |
+| Primary tech lead | `edit: deny` — no app code |
+| Product gate | `ready` before ship |
+| Design gate | human `design approve` before implement (mock auto-approves in CI) |
+| Design language | injected into architect/developer/reviewer; must follow |
+| Done | requires `commit_sha` |
+| Commit | scoped + secret-path/content guard |
+| Rollback | `foreman rollback --task-id T` (scoped) |
+| Handoff | balanced JSON + retries on miss |
+| Validate | env missing Flutter ≠ app bug (no debugger thrash) |
+| Verify | advisory by default |
 
 ---
 
-## How it works
+## How ship works
 
 ```
-discover (you + agent questions)
+ready ✓ + design language approved
         ↓
-  prd.md + design.md  →  ready ✓
+seed task DAG (if empty)
         ↓
-  foreman run (OpenCode tech lead)
-        ↓
-  role sub-agents (architect, developer, tester, …)
-        ↓
-  validate → commit → next task
+for each ready task:
+  state plan → remaining roles only
+  for each role:
+    spawn prompt → opencode run --agent <role>
+    handoff JSON (retry if missing)
+  validate → commit → state done
 ```
 
-Progress lives in `.foreman/` (gitignore it).
-
-```bash
-echo ".foreman/" >> .gitignore
-```
+State: `.foreman/` (gitignore it). Design language: `tasks/design_language.md`.
 
 ---
 
@@ -168,15 +124,14 @@ echo ".foreman/" >> .gitignore
 
 | Problem | Fix |
 |---------|-----|
-| `ready` fails | `foreman discover` or flesh out `tasks/*.md` |
-| `command not found: foreman` | Fix PATH (see above) |
-| Build stopped | `foreman run` again |
-| OpenCode missing agent | `./install.sh` + restart OpenCode |
+| `ready` fails | `foreman discover` |
+| design blocked | `foreman design show` then `approve` |
+| `command not found: foreman` | fix PATH |
+| build stopped | `foreman run` again |
+| handoff missing | executor retries; check OpenCode role agent install |
 
 ---
 
-## For the AI agent
+## License
 
-Advanced tools remain for orchestration. See `foreman help --agent` and `opencode/agent/foreman.md`.
-
-Repo: https://github.com/Surya-SP/foreman
+See the repository.

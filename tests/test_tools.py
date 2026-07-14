@@ -86,7 +86,7 @@ def test_plan_cache_key():
 # ── Spawn tests ───────────────────────────────────────────────────────────
 def test_spawn_all_roles():
     for role in ("architect", "developer", "reviewer", "tester", "debugger",
-                 "refactorer", "product_owner", "qa_lead"):
+                 "refactorer", "product_owner", "qa_lead", "designer"):
         rc, out, _ = tool("spawn.py", "--role", role, "--task-id", "test")
         assert rc == 0, f"role={role}"
         d = js(out); assert d["role"] == role; assert d["prompt"]
@@ -458,6 +458,52 @@ def test_executor_mock_inline():
         r = execute_project(_ROOT, t, template="todo", mock=True, max_tasks=8, force=False)
         assert r.get("ok") is True, r
         assert r.get("tasks_run", 0) >= 1
+        assert os.path.exists(os.path.join(t, "tasks", "design_language.md"))
+
+
+def test_design_approve_gate():
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+    from foreman import design_gate as dg
+    with tempfile.TemporaryDirectory() as t:
+        open(os.path.join(t, "pubspec.yaml"), "w").write("name: x\n")
+        a = dg.assess_design(t)
+        assert a["approved"] is False
+        obj = {
+            "role": "designer",
+            "summary": "Clean system",
+            "mockups": [{"screen": "Home", "wireframe": "x", "notes": ""}],
+            "design_language_md": "# Design Language\n\n## Tokens\n- Primary: #111111\n",
+            "status": "pending_review",
+        }
+        hd = os.path.join(t, ".foreman", "handoffs")
+        os.makedirs(hd, exist_ok=True)
+        json.dump(obj, open(os.path.join(hd, "design.designer.json"), "w"))
+        dg.record_from_handoff(t, obj)
+        assert dg.assess_design(t)["status"] == "pending_review"
+        r = dg.approve(t)
+        assert r["ok"] and r["approved"]
+        assert "Primary" in open(os.path.join(t, "tasks", "design_language.md")).read()
+
+
+def test_secret_guard_blocks_env():
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+    from foreman.config import Config
+    from foreman.vcs import Vcs
+    with tempfile.TemporaryDirectory() as t:
+        subprocess.run(["git", "init"], cwd=t, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=t, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=t, capture_output=True)
+        open(os.path.join(t, "ok.dart"), "w").write("class A {}\n")
+        subprocess.run(["git", "add", "ok.dart"], cwd=t, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "i"], cwd=t, capture_output=True)
+        open(os.path.join(t, ".env"), "w").write("API_KEY=sk_live_abcdefghijklmnopqrstuv\n")
+        v = Vcs(Config(project_dir=t))
+        # try commit including .env path
+        ok = v.commit_task("t1", "bad", files=[".env"])
+        assert ok is False
+        assert "secret" in (v.last_error or "").lower() or "safe" in (v.last_error or "").lower()
 
 
 def test_wrapper_state_auto_requires_id():
@@ -1276,7 +1322,7 @@ if __name__ == "__main__":
         ("info --brief", test_info_brief),
         ("plan (no PRD)", test_plan_missing),
         ("plan cache key", test_plan_cache_key),
-        ("spawn all 8 roles", test_spawn_all_roles),
+        ("spawn all 9 roles", test_spawn_all_roles),
         ("spawn --estimate-tokens", test_spawn_estimate_tokens),
         ("spawn --load-from", test_spawn_load_from),
         ("spawn shell-injection safe", test_spawn_no_shell_injection),
@@ -1365,6 +1411,8 @@ if __name__ == "__main__":
         ("jsonutil balanced", test_jsonutil_balanced),
         ("run dry discover phase", test_run_dry_discover_when_not_ready),
         ("executor mock e2e", test_executor_mock_inline),
+        ("design approve gate", test_design_approve_gate),
+        ("secret guard", test_secret_guard_blocks_env),
         ("state done --force overrides", test_state_done_force_overrides),
         ("debt harvest markers", test_debt_harvest),
         ("debt skips build/", test_debt_skips_build_and_pycache),

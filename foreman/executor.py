@@ -16,9 +16,10 @@ from typing import Any
 from foreman.readiness import assess
 
 ROLE_AGENTS = {
-    "product_owner", "architect", "qa_lead", "developer", "tester",
+    "product_owner", "designer", "architect", "qa_lead", "developer", "tester",
     "reviewer", "refactorer", "debugger",
 }
+HANDOFF_RETRIES = 2
 
 MAX_TASKS_DEFAULT = 50
 MAX_DEBUG_ATTEMPTS = 3
@@ -120,14 +121,47 @@ def _persist_handoff(home: str, project: str, task_id: str, role: str, text: str
     return rc == 0 and data.get("ok", True), data
 
 
+def _run_role_with_retry(
+    home: str,
+    project: str,
+    role: str,
+    prompt: str,
+    task_id: str,
+    *,
+    model: str | None,
+    auto: bool,
+    dry: bool,
+) -> tuple[bool, dict, list[dict]]:
+    """OpenCode role session + handoff; retry once with JSON-only re-prompt."""
+    log: list[dict] = []
+    for attempt in range(1, HANDOFF_RETRIES + 2):
+        p = prompt
+        if attempt > 1:
+            p = (
+                prompt
+                + "\n\n## RETRY: previous output had no valid handoff JSON.\n"
+                "Reply with ONLY one JSON object matching the role schema. No prose.\n"
+            )
+        code, out = _opencode_role(project, role, p, model=model, auto=auto, dry=dry)
+        log.append({"attempt": attempt, "exit": code})
+        if dry:
+            return True, {"dry": True}, log
+        if _handoff_exists(project, task_id, role):
+            return True, {"ok": True, "self_handoff": True}, log
+        ok_h, hdata = _persist_handoff(home, project, task_id, role, out)
+        if ok_h:
+            return True, hdata, log
+        log.append({"attempt": attempt, "handoff": hdata})
+    return False, {"ok": False, "message": "handoff missing after retries"}, log
+
+
 def _spawn_prompt(home: str, project: str, role: str, task_id: str, **flags: str) -> tuple[bool, str, dict]:
     args = ["--role", role, "--task-id", task_id]
-    if role != "reviewer":
+    if role not in ("reviewer",):
         args.append("--self-handoff")
     if role == "developer":
         args.extend(["--load-from", "architect"])
     if role == "tester":
-        # load qa_lead if present else skip
         if _handoff_exists(project, task_id, "qa_lead"):
             args.extend(["--load-from", "qa_lead"])
     if role == "refactorer" and _handoff_exists(project, task_id, "reviewer"):
@@ -138,6 +172,57 @@ def _spawn_prompt(home: str, project: str, role: str, task_id: str, **flags: str
     if rc != 0 or not data.get("prompt"):
         return False, "", data
     return True, data["prompt"], data
+
+
+def run_designer_phase(
+    home: str,
+    project: str,
+    *,
+    mock: bool = False,
+    model: str | None = None,
+    auto: bool = True,
+) -> dict[str, Any]:
+    """Run designer role; leaves status pending_review until human approve."""
+    from foreman import design_gate as dg
+    tid = "design"
+    ok_s, prompt, spawn_data = _spawn_prompt(home, project, "designer", tid)
+    if not ok_s:
+        return {"ok": False, "error": "spawn_failed", "spawn": spawn_data}
+    if mock:
+        obj = {
+            "role": "designer",
+            "summary": "Mock design system for CI",
+            "mockups": [{"screen": "HomeScreen", "wireframe": "AppBar\nList\nFAB", "notes": "mock"}],
+            "design_language_md": (
+                "# Design Language\n\n## Tokens\n- Primary: #2196F3\n\n"
+                "## Typography\n- Body: 14sp\n\n## Components\n- Material 3\n\n"
+                "## Layout\n- 8dp grid\n\n## States\n- empty/loading/error\n\n"
+                "## Accessibility\n- 48dp targets\n\n## Do / Don't\n- Do follow tokens\n"
+            ),
+            "open_questions": [],
+            "status": "pending_review",
+        }
+        raw = json.dumps(obj)
+        rc, hdata = _run_json(home, project, "handoff.py", "--task-id", tid, "--role", "designer", "--stdin", stdin=raw)
+        if rc != 0:
+            return {"ok": False, "error": "mock_handoff", "handoff": hdata}
+        a = dg.assess_design(project)
+        return {
+            **a,
+            "ok": True,
+            "status": a.get("status") or "pending_review",
+            "message": "Designer draft ready — human: foreman design show && foreman design approve",
+        }
+    ok, hdata, log = _run_role_with_retry(home, project, "designer", prompt, tid, model=model, auto=auto, dry=False)
+    if not ok:
+        return {"ok": False, "error": "designer_handoff_failed", "handoff": hdata, "log": log}
+    a = dg.assess_design(project)
+    return {
+        **a,
+        "ok": True,
+        "status": a.get("status") or "pending_review",
+        "message": "Review mockups: foreman design show → foreman design approve",
+    }
 
 
 def _plan(home: str, project: str, task_id: str) -> dict:
@@ -195,7 +280,6 @@ def execute_task(
             return {"ok": False, "task_id": task_id, "error": "spawn_failed", "spawn": spawn_data, "log": log}
         step("spawn", role=role)
         if mock:
-            # Golden e2e: write minimal valid handoff without LLM
             from foreman.schemas import ROLE_SCHEMAS
             obj: dict[str, Any] = {"role": role, "task_id": task_id}
             for k in ROLE_SCHEMAS.get(role, []):
@@ -217,6 +301,12 @@ def execute_task(
                     obj[k] = "APPROVED"
                 elif k == "fixes_applied":
                     obj[k] = []
+                elif k == "mockups":
+                    obj[k] = [{"screen": "Home", "wireframe": "x", "notes": ""}]
+                elif k == "design_language_md":
+                    obj[k] = "# Design Language\n## Tokens\n- Primary: #2196F3\n"
+                elif k == "status":
+                    obj[k] = "pending_review"
                 elif k in ("root_cause", "fix", "approach", "test_strategy"):
                     obj[k] = f"mock-{role}"
                 else:
@@ -228,15 +318,16 @@ def execute_task(
             step("mock_handoff", role=role)
             continue
 
-        code, out = _opencode_role(project, role, prompt, model=model, auto=auto, dry=dry)
-        step("opencode", role=role, exit=code)
+        ok_r, hdata, rlog = _run_role_with_retry(
+            home, project, role, prompt, task_id, model=model, auto=auto, dry=dry,
+        )
+        step("opencode_role", role=role, retries=rlog)
         if dry:
             continue
-        ok_h, hdata = _persist_handoff(home, project, task_id, role, out)
-        if not ok_h and not _handoff_exists(project, task_id, role):
+        if not ok_r and not _handoff_exists(project, task_id, role):
             return {
                 "ok": False, "task_id": task_id, "error": "handoff_missing",
-                "role": role, "handoff": hdata, "opencode_exit": code, "log": log,
+                "role": role, "handoff": hdata, "log": log,
             }
         step("handoff_ok", role=role)
 
@@ -250,6 +341,18 @@ def execute_task(
         else:
             rc, vdata = _run_json(home, project, "validate.py", "--lines", "50")
             step("validate", ok=vdata.get("ok"), exit=rc)
+            # Environment failures: do not burn debugger budget
+            steps = vdata.get("steps") or []
+            env_fail = any(
+                isinstance(s, dict) and s.get("name") == "sdk-preflight" and not s.get("ok")
+                for s in steps
+            ) or "flutter not on PATH" in json.dumps(vdata)
+            if env_fail:
+                return {
+                    "ok": False, "task_id": task_id, "error": "env_flutter_missing",
+                    "validate": vdata, "log": log,
+                    "hint": "Install Flutter SDK; not an app bug",
+                }
             attempts = 0
             while not vdata.get("ok") and attempts < MAX_DEBUG_ATTEMPTS:
                 attempts += 1
@@ -257,8 +360,10 @@ def execute_task(
                 ok_s, prompt, _ = _spawn_prompt(home, project, "debugger", task_id, error=err)
                 if not ok_s:
                     break
-                code, out = _opencode_role(project, "debugger", prompt, model=model, auto=auto)
-                _persist_handoff(home, project, task_id, "debugger", out)
+                ok_r, _, rlog = _run_role_with_retry(
+                    home, project, "debugger", prompt, task_id, model=model, auto=auto, dry=False,
+                )
+                step("debugger", attempt=attempts, ok=ok_r, retries=rlog)
                 rc, vdata = _run_json(home, project, "validate.py", "--lines", "50")
                 step("revalidate", attempt=attempts, ok=vdata.get("ok"))
             if not vdata.get("ok"):
@@ -331,8 +436,9 @@ def execute_project(
     dry: bool = False,
     mock: bool = False,
     force: bool = False,
+    skip_design: bool = False,
 ) -> dict[str, Any]:
-    """Run full autonomous ship: ready gate → seed → each ready task via OpenCode roles."""
+    """Run full autonomous ship: ready → design approve gate → seed → OpenCode roles."""
     project = os.path.abspath(project)
     home = os.path.abspath(home)
     ready = assess(project)
@@ -346,6 +452,42 @@ def execute_project(
         }
     if not shutil.which("opencode") and not mock and not dry:
         return {"ok": False, "message": "opencode not found on PATH", "hint": "https://opencode.ai"}
+
+    # Design language gate (human-in-the-loop) before implementation
+    from foreman import design_gate as dg
+    dstat = dg.assess_design(project)
+    if not dstat.get("approved") and not skip_design and not force:
+        if dry:
+            return {
+                "ok": True, "dry_run": True, "phase": "design",
+                "message": "Would run designer then wait for human approve",
+                "design": dstat,
+            }
+        # Auto-run designer if no draft yet
+        if dstat.get("status") in ("missing", "rejected") or not dstat.get("has_handoff"):
+            dr = run_designer_phase(home, project, mock=mock, model=model, auto=auto)
+            dstat = dg.assess_design(project)
+            if mock:
+                # CI: auto-approve mock design language
+                dg.approve(project)
+                dstat = dg.assess_design(project)
+            elif not dstat.get("approved"):
+                return {
+                    "ok": False,
+                    "phase": "design",
+                    "message": "Design draft ready — human review required",
+                    "design": dstat,
+                    "designer": dr,
+                    "hint": "foreman design show  &&  foreman design approve  &&  foreman run",
+                }
+        else:
+            return {
+                "ok": False,
+                "phase": "design",
+                "message": "Design pending human approval",
+                "design": dstat,
+                "hint": "foreman design show  &&  foreman design approve  &&  foreman run",
+            }
 
     seed = _seed_if_empty(home, project, template)
     results = []

@@ -18,6 +18,10 @@ SDK: {{sdk}}
 Packages: {{packages}}
 Project dir: {{project_dir}}
 
+## Approved design language (STRICT)
+
+{{design_language}}
+
 ## Repo memory (facts only)
 
 {{repo_memory}}

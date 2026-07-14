@@ -12,6 +12,7 @@ from typing import Any
 
 ROLE_BLURB = {
     "product_owner": "Break PRD into tasks",
+    "designer": "Mockups + design language (human review)",
     "architect": "Design approach before coding",
     "qa_lead": "Decide test strategy",
     "developer": "Write the code",

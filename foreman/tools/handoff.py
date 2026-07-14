@@ -111,6 +111,15 @@ if os.path.exists(state_path):
         with open(state_path, "w") as f:
             json.dump(state_all, f, indent=2)
 
+# ─── Designer → design gate (pending human approval) ────────────────────────
+design_gate_rec = {}
+if role == "designer":
+    try:
+        from foreman import design_gate as dg
+        design_gate_rec = dg.record_from_handoff(target, obj)
+    except Exception as e:
+        design_gate_rec = {"ok": False, "message": str(e)}
+
 # ─── Memory graph: record decisions + file edges (facts only) ───────────────
 memory_rec = {}
 try:
@@ -123,4 +132,4 @@ rel = os.path.relpath(path, target) if path.startswith(target) else path
 ui.handoff_view(role, task_id, True, path=rel)
 _out({"ok": True, "path": path, "bytes": os.path.getsize(path),
       "schema_errors": errors, "forced": forced, "overwrote_previous": overwrote,
-      "state_updates": state_updates, "memory": memory_rec}, 0)
+      "state_updates": state_updates, "memory": memory_rec, "design_gate": design_gate_rec}, 0)

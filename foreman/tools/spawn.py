@@ -33,21 +33,24 @@ ROLE_FILES = {
     "architect": "architect.txt", "developer": "implementer.txt",
     "reviewer": "reviewer.txt", "tester": "tester.txt", "debugger": "debugger.txt",
     "refactorer": "refactorer.txt", "product_owner": "product_owner.txt",
-    "qa_lead": "qa_lead.txt",
+    "qa_lead": "qa_lead.txt", "designer": "designer.txt",
 }
 # Only compute placeholders the role actually uses.
 ROLE_NEEDS = {
     "architect": {"task_description", "acceptance_criteria", "sdk", "packages", "lib_files",
-                  "project_memory", "design", "repo_memory"},
+                  "project_memory", "design", "design_language", "repo_memory"},
     "developer": {"task_description", "acceptance_criteria", "architect_plan", "sdk", "packages",
-                  "project_dir", "repo_memory"},
-    "reviewer":  {"task_description", "acceptance_criteria", "diff", "repo_memory"},
+                  "project_dir", "design_language", "repo_memory"},
+    "reviewer":  {"task_description", "acceptance_criteria", "diff", "design_language", "repo_memory"},
     "tester":    {"task_description", "acceptance_criteria", "changed_files", "project_dir", "test_plan",
                   "repo_memory"},
     "debugger":  {"task_description", "changed_files", "failed_steps", "validation_error", "repo_memory"},
-    "refactorer":{"task_description", "review_findings", "changed_files", "project_dir", "repo_memory"},
+    "refactorer":{"task_description", "review_findings", "changed_files", "project_dir",
+                  "design_language", "repo_memory"},
     "product_owner": {"prd", "design", "project_memory", "repo_memory"},
-    "qa_lead":   {"task_description", "acceptance_criteria", "changed_files", "design", "repo_memory"},
+    "qa_lead":   {"task_description", "acceptance_criteria", "changed_files", "design",
+                  "design_language", "repo_memory"},
+    "designer":  {"prd", "design", "project_dir", "repo_memory"},
 }
 
 def _arg(name, default=None):
@@ -134,6 +137,18 @@ if "prd" in needs or "design" in needs:
     values["prd"] = json.dumps(plan.get("prd", {}))
     values["design"] = json.dumps(plan.get("design", {}))
 
+if "design_language" in needs:
+    from foreman.design_gate import design_language_text
+    dl = design_language_text(target)
+    if dl.strip():
+        # Cap for token budget
+        values["design_language"] = dl if len(dl) < 6000 else dl[:5800] + "\n…[truncated]"
+    else:
+        values["design_language"] = (
+            "(no approved design language yet — follow tasks/design.md; "
+            "human should run: foreman design approve after designer review)"
+        )
+
 if "project_memory" in needs:
     state_path = os.path.join(target, ".foreman", "tasks.json")
     done = []
@@ -209,8 +224,20 @@ if not values.get("repo_memory"):
         "\n",
         filled,
     )
+if not values.get("design_language") or values.get("design_language", "").startswith("(no approved"):
+    # keep placeholder text so agents still see the note
+    pass
 for k, v in values.items():
     filled = filled.replace("{{" + k + "}}", v if v is not None else "")
+# Mandatory design-language compliance for implementers
+if role in ("architect", "developer", "reviewer", "refactorer", "qa_lead"):
+    filled += (
+        "\n\n## Design language (STRICT)\n\n"
+        "Follow `tasks/design_language.md` when present (injected above as design_language). "
+        "Do not invent colors, type scales, or component patterns that conflict with it. "
+        "If design_language is missing/unapproved, stop and tell Tech Lead to run "
+        "`foreman design run` → human `foreman design approve`.\n"
+    )
 missing = re.findall(r"\{\{(\w+)\}\}", filled)
 
 # ---- Optional: append self-handoff instruction ------------------------------

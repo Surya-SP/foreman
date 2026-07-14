@@ -20,6 +20,10 @@ Existing lib files: {{lib_files}}
 
 {{design}}
 
+## Approved design language (STRICT)
+
+{{design_language}}
+
 ## Repo memory (facts only)
 
 {{repo_memory}}
