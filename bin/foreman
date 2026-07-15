@@ -439,52 +439,36 @@ Prefer: foreman discover → ready → design approve → run
 EOF
     else
       cat <<EOF
-Foreman — autonomous Flutter app builder
+Foreman — OpenCode control plane for Flutter
 
-You write what to build. Foreman builds it.
+Does not call LLMs. Gates product + design, then runs:
+  opencode run --agent <role> per planned step (Python execute loop).
 
 Setup (once)
-  1. Install OpenCode:  https://opencode.ai
-  2. Install Flutter:   https://docs.flutter.dev/get-started
-  3. Install Foreman:
-       git clone https://github.com/Surya-SP/foreman
-       cd foreman && ./install.sh
-       export PATH="\$HOME/.local/bin:\$PATH"
+  1. OpenCode:  https://opencode.ai
+  2. Flutter:   https://docs.flutter.dev/get-started
+  3. git clone …/foreman && cd foreman && ./install.sh
+     export PATH="\$HOME/.local/bin:\$PATH"
+     Restart OpenCode
 
-Build an app (outside the foreman repo — any Flutter project)
+Build (app outside this repo)
   1. flutter create my_app && cd my_app
   2. foreman doctor
-  3. foreman discover        # interactive PRD + design
-  4. foreman ready           # product docs gate
-  5. foreman design run && foreman design show && foreman design approve
-  6. foreman run             # autonomous OpenCode ship
+  3. foreman discover && foreman ready
+  4. foreman design run && foreman design show && foreman design approve
+  5. foreman run
 
-Everyday commands
-  foreman discover           Interactive product brainstorm → PRD + design
-  foreman ready              Check if product docs are complete
-  foreman design run|show|approve   Design language (human review; show --open)
-  foreman metrics            Handoff / role session proxies
-  foreman report [--write]   Field-report draft from local state
-  foreman prove [dir]        Deterministic ship proof (mock roles + real code)
-  foreman run                Discover/design gates, then autonomous OpenCode ship
-  foreman execute            Hard loop: OpenCode role agents per task step
-  foreman status             What is left to do
-  foreman doctor             Fix install / PATH problems
-  foreman init               Empty PRD + design templates
-  foreman deploy list|install
-  foreman demo               Preview terminal look (mock)
+Commands
+  discover | ready | design run|show|approve|reject
+  run | execute | prove [dir] | status | doctor | init
+  metrics | report [--write] | deploy list|install | demo | help
 
-Flow
-  discover → ready → design approve → run
-  (run = OpenCode --agent <role> per step)
+Flow: discover → ready → design approve → run
+Prove (no LLM): foreman prove
+Docs: README.md · docs/KNOWN_LIMITS.md
 
-Tips
-  • Restart OpenCode after install
-  • PATH: export PATH="\$HOME/.local/bin:/opt/homebrew/bin:\$PATH"
-  • Stuck mid-build? foreman run again
-  • TUI: opencode --agent foreman then /ship
-
-Agent tools:  foreman help --agent
+PATH: export PATH="\$HOME/.local/bin:/opt/homebrew/bin:\$PATH"
+Agent tools: foreman help --agent
 EOF
     fi
     ;;
