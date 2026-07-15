@@ -45,14 +45,15 @@ target = os.path.abspath(_arg("--project") or os.environ.get("FOREMAN_PROJECT") 
 message = _arg("--message")
 model = _arg("--model")
 template = _arg("--template")
-dry = "--dry-run" in sys.argv
+# dry assigned again below after preflight for clarity; keep single source
 no_auto = "--no-auto" in sys.argv
 
 # Ensure runtime dirs
 os.makedirs(os.path.join(target, ".foreman", "handoffs"), exist_ok=True)
 
-# Preflight
-opencode = shutil.which("opencode")
+# Preflight — dry-run must work without a live opencode binary (CI)
+dry = "--dry-run" in sys.argv
+opencode = shutil.which("opencode") or ("opencode" if dry else None)
 if not opencode:
     _out({
         "ok": False,

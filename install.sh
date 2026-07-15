@@ -78,8 +78,12 @@ echo "  Command: $GLOBAL_OC/command/ship.md  → /ship"
 echo "  Skill:   $GLOBAL_OC/skill/foreman/"
 
 # ── ripgrep (token-cheap code search for agents) ────────────────────────────
+# Never fail install if rg is missing. Skip auto-install on CI / non-interactive.
 if command -v rg >/dev/null 2>&1; then
-  echo "  rg:      $(command -v rg)  ($(rg --version 2>/dev/null | head -1))"
+  echo "  rg:      $(command -v rg)  ($(rg --version 2>/dev/null | head -1 || true))"
+elif [ "${CI:-}" = "true" ] || [ "${FOREMAN_SKIP_RG_INSTALL:-}" = "1" ] || [ ! -t 0 ]; then
+  echo "  rg:      not found (skip auto-install on CI/non-interactive)"
+  echo "         optional: brew install ripgrep  |  apt install ripgrep"
 else
   echo "  rg:      not found — installing ripgrep if package manager available…"
   installed=0
@@ -90,9 +94,11 @@ else
     fi
   fi
   if [ "$installed" -eq 0 ] && command -v apt-get >/dev/null 2>&1; then
-    if (sudo -n apt-get install -y ripgrep 2>/dev/null) || (apt-get install -y ripgrep 2>/dev/null); then
-      installed=1
-      echo "  rg:      via apt → $(command -v rg || true)"
+    if (sudo -n apt-get install -y ripgrep 2>/dev/null) || true; then
+      if command -v rg >/dev/null 2>&1; then
+        installed=1
+        echo "  rg:      via apt → $(command -v rg || true)"
+      fi
     fi
   fi
   if [ "$installed" -eq 0 ] && command -v pacman >/dev/null 2>&1; then
