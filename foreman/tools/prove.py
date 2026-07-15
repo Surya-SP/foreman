@@ -27,10 +27,16 @@ _start = time.time()
 def _arg(name, default=None):
     return next((sys.argv[i + 1] for i, a in enumerate(sys.argv) if a == name), default)
 
-target = os.path.abspath(_arg("--project") or os.environ.get("FOREMAN_PROJECT") or ".")
+target = os.path.abspath(_arg("--project") or os.environ.get("FOREMAN_PROJECT") or "")
 home = os.environ.get("FOREMAN_HOME") or _ROOT
 max_tasks = _arg("--max-tasks")
 max_tasks = int(max_tasks) if max_tasks and str(max_tasks).isdigit() else 12
+
+# Never pollute the Foreman source tree
+if not target or os.path.abspath(target) == os.path.abspath(home) or os.path.abspath(target) == os.path.abspath(_ROOT):
+    import tempfile
+    target = tempfile.mkdtemp(prefix="foreman-prove-")
+    print(json.dumps({"note": "prove uses temp project (refused FOREMAN_HOME/cwd)", "project": target}), file=sys.stderr)
 
 
 def _ensure_flutter_project(path: str) -> None:

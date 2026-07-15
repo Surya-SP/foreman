@@ -267,13 +267,14 @@ PY
     ;;
 
   prove)
-    # Deterministic ship proof (no live LLM). Optional path: prove /tmp/app
-    prove_dir="${1:-$PROJECT}"
-    if [ -n "${1:-}" ]; then
+    # Deterministic ship proof (no live LLM). Prefer explicit dir; never default to FOREMAN_HOME.
+    if [ -n "${1:-}" ] && [[ "${1}" != -* ]]; then
+      prove_dir="$(cd "$1" 2>/dev/null && pwd)" || { echo '{"ok":false,"message":"prove path not found"}'; exit 2; }
       shift || true
-      prove_dir="$(cd "$prove_dir" 2>/dev/null && pwd)" || prove_dir="$1"
+    else
+      prove_dir="$(mktemp -d "${TMPDIR:-/tmp}/foreman-prove.XXXXXX")"
     fi
-    exec python3 "$TOOLS/prove.py" --project "${prove_dir:-$PROJECT}" "$@"
+    exec python3 "$TOOLS/prove.py" --project "$prove_dir" "$@"
     ;;
 
   log)

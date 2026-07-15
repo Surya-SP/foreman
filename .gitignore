@@ -6,3 +6,13 @@ venv/
 
 # Foreman runtime state (never checked in)
 .foreman/
+
+# Never treat this repo as a Flutter app (prove/run pollution)
+/pubspec.yaml
+/pubspec.lock
+/lib/
+/test/
+/build/
+/.dart_tool/
+/tasks/
+*.iml
