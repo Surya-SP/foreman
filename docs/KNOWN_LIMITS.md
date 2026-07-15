@@ -35,7 +35,8 @@ Prefer strong models for ship; weak models thrash retries.
 | `foreman run` (default execute) | Autonomous after gates |
 | `foreman run --agent-loop` | Freeform tech-lead TUI-style session |
 | `opencode --agent foreman` + `/ship` | Interactive TUI |
-| `foreman execute --mock` | CI / plumbing only |
+| `foreman execute --mock` | Mock handoffs (prefer `foreman prove`) |
+| `foreman prove [dir]` | Deterministic ship: mock roles **write real Dart**, design approve, commits, report. Optional real `flutter analyze` if Flutter installed. **Not** live-LLM quality. |
 
 ## Handoff failures
 

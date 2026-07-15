@@ -335,46 +335,31 @@ def execute_task(
             return {"ok": False, "task_id": task_id, "error": "spawn_failed", "spawn": spawn_data, "log": log}
         step("spawn", role=role)
         if mock:
-            from foreman.schemas import ROLE_SCHEMAS
-            obj: dict[str, Any] = {"role": role, "task_id": task_id}
-            for k in ROLE_SCHEMAS.get(role, []):
-                if k == "role":
-                    continue
-                if k == "tasks":
-                    obj[k] = []
-                elif k == "files":
-                    obj[k] = [{"path": "lib/main.dart", "purpose": "app"}]
-                elif k == "files_changed":
-                    obj[k] = ["lib/main.dart"]
-                elif k == "test_files":
-                    obj[k] = []
-                elif k == "all_pass":
-                    obj[k] = True
-                elif k == "findings":
-                    obj[k] = []
-                elif k == "verdict":
-                    obj[k] = "APPROVED"
-                elif k == "fixes_applied":
-                    obj[k] = []
-                elif k == "mockups":
-                    obj[k] = [{"screen": "Home", "wireframe": "x", "notes": "", "goal": "x", "primary_cta": "Go"}]
-                elif k == "design_language_md":
-                    obj[k] = "# Design Language\n## Tokens\n- Primary: #2196F3\n"
-                elif k == "token_index":
-                    obj[k] = {"primary": "#2196F3", "on_primary": "#FFFFFF", "surface": "#FFFBFE",
-                              "on_surface": "#1C1B1F", "error": "#B3261E", "outline": "#79747E",
-                              "primary_container": "#BBDEFB"}
-                elif k == "status":
-                    obj[k] = "pending_review"
-                elif k in ("root_cause", "fix", "approach", "test_strategy"):
-                    obj[k] = f"mock-{role}"
-                else:
-                    obj[k] = f"mock-{k}"
+            from foreman.mock_impl import apply_developer, apply_tester, mock_handoff_payload
+            files_changed: list[str] = []
+            task_desc = ""
+            sp = os.path.join(project, ".foreman", "tasks.json")
+            if os.path.exists(sp):
+                try:
+                    task_desc = (json.load(open(sp)).get(task_id) or {}).get("description") or ""
+                except (json.JSONDecodeError, OSError):
+                    pass
+            if role in ("architect", "developer"):
+                files_changed = apply_developer(project, task_id, task_desc)
+            elif role == "tester":
+                files_changed = apply_tester(project, task_id)
+            # Keep dart format --set-exit-if-changed green
+            if files_changed and shutil.which("dart"):
+                subprocess.run(
+                    ["dart", "format", "."], cwd=project,
+                    capture_output=True, timeout=60,
+                )
+            obj = mock_handoff_payload(role, task_id, files_changed or None)
             raw = json.dumps(obj)
             rc, hdata = _run_json(home, project, "handoff.py", "--task-id", task_id, "--role", role, "--stdin", stdin=raw)
             if rc != 0:
                 return {"ok": False, "task_id": task_id, "error": "mock_handoff", "handoff": hdata, "log": log}
-            step("mock_handoff", role=role)
+            step("mock_handoff", role=role, files=files_changed)
             continue
 
         ok_r, hdata, rlog = _run_role_with_retry(
@@ -394,24 +379,42 @@ def execute_task(
         return {"ok": True, "task_id": task_id, "dry_run": True, "log": log}
 
     if needs_validate and profile not in ("design", "scope"):
-        if mock:
-            step("validate", ok=True, mock=True)
-            vdata = {"ok": True}
-        else:
-            rc, vdata = _run_json(home, project, "validate.py", "--lines", "50")
-            step("validate", ok=vdata.get("ok"), exit=rc)
-            # Environment failures: do not burn debugger budget
-            steps = vdata.get("steps") or []
-            env_fail = any(
-                isinstance(s, dict) and s.get("name") == "sdk-preflight" and not s.get("ok")
-                for s in steps
-            ) or "flutter not on PATH" in json.dumps(vdata)
-            if env_fail:
+        # Match validate pipeline order: fix then format so --set-exit-if-changed is clean
+        if mock and shutil.which("dart"):
+            subprocess.run(["dart", "fix", "--apply"], cwd=project, capture_output=True, timeout=120)
+            subprocess.run(["dart", "format", "."], cwd=project, capture_output=True, timeout=60)
+        # Always attempt real validate when flutter is present (including mock code path).
+        # Skip only when flutter missing (env), so CI without Flutter still passes plumbing.
+        rc, vdata = _run_json(home, project, "validate.py", "--lines", "50")
+        step("validate", ok=vdata.get("ok"), exit=rc, mock=mock)
+        steps = vdata.get("steps") or []
+        env_fail = any(
+            isinstance(s, dict) and s.get("name") == "sdk-preflight" and not s.get("ok")
+            for s in steps
+        ) or "flutter not on PATH" in json.dumps(vdata)
+        if env_fail:
+            if mock:
+                step("validate_skipped_env", ok=True)
+                vdata = {"ok": True, "skipped_env": True}
+            else:
                 return {
                     "ok": False, "task_id": task_id, "error": "env_flutter_missing",
                     "validate": vdata, "log": log,
                     "hint": "Install Flutter SDK; not an app bug",
                 }
+        elif not vdata.get("ok"):
+            if mock:
+                # Retry once: fix+format can race with validate's own fix step
+                if shutil.which("dart"):
+                    subprocess.run(["dart", "fix", "--apply"], cwd=project, capture_output=True, timeout=120)
+                    subprocess.run(["dart", "format", "."], cwd=project, capture_output=True, timeout=60)
+                rc, vdata = _run_json(home, project, "validate.py", "--lines", "50")
+                step("validate_retry", ok=vdata.get("ok"), exit=rc)
+                if not vdata.get("ok"):
+                    return {
+                        "ok": False, "task_id": task_id, "error": "mock_validate_failed",
+                        "validate": vdata, "log": log,
+                    }
             attempts = 0
             while not vdata.get("ok") and attempts < MAX_DEBUG_ATTEMPTS:
                 attempts += 1
@@ -478,23 +481,9 @@ def execute_task(
     rc, cdata = _run_json(home, project, "commit.py", "--task-id", task_id, "--desc", desc)
     step("commit", ok=cdata.get("ok"), data=cdata)
     if not cdata.get("ok"):
-        # allow force done only in mock with empty tree
-        if mock:
-            # inject fake sha for mock e2e
-            sp = os.path.join(project, ".foreman", "tasks.json")
-            try:
-                st = json.load(open(sp))
-                if task_id in st:
-                    st[task_id]["commit_sha"] = "mockdeadbeef"
-                    json.dump(st, open(sp, "w"), indent=2)
-            except (OSError, json.JSONDecodeError):
-                pass
-        else:
-            return {"ok": False, "task_id": task_id, "error": "commit_failed", "commit": cdata, "log": log}
+        return {"ok": False, "task_id": task_id, "error": "commit_failed", "commit": cdata, "log": log}
 
     rc, ddata = _run_json(home, project, "state.py", "--mark", task_id, "--status", "done")
-    if rc != 0 and mock:
-        rc, ddata = _run_json(home, project, "state.py", "--mark", task_id, "--status", "done", "--force")
     step("done", ok=rc == 0, data=ddata)
     return {"ok": rc == 0, "task_id": task_id, "log": log, "done": ddata}
 
@@ -539,10 +528,16 @@ def execute_project(
             }
         # Auto-run designer if no draft yet
         if dstat.get("status") in ("missing", "rejected") or not dstat.get("has_handoff"):
-            dr = run_designer_phase(home, project, mock=mock, model=model, auto=auto)
+            if mock:
+                from foreman.mock_impl import mock_handoff_payload
+                raw = json.dumps(mock_handoff_payload("designer", "design"))
+                _run_json(home, project, "handoff.py", "--task-id", "design", "--role", "designer", "--stdin", stdin=raw)
+                dr = {"ok": True, "mock": True}
+            else:
+                dr = run_designer_phase(home, project, mock=False, model=model, auto=auto)
             dstat = dg.assess_design(project)
             if mock:
-                # CI: auto-approve mock design language
+                # Prove/CI: auto-approve design language after draft
                 dg.approve(project)
                 dstat = dg.assess_design(project)
             elif not dstat.get("approved"):

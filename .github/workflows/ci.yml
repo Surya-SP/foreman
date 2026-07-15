@@ -16,7 +16,7 @@ jobs:
           python-version: "3.12"
       - name: Unit + integration tests (plumbing)
         run: python3 tests/test_tools.py
-      - name: Golden e2e MOCK only (no live OpenCode / no real Flutter validate)
+      - name: Deterministic ship proof (mock roles write real Dart; no live LLM)
         run: |
-          echo "::notice::This e2e uses --mock. It does NOT prove live ship quality."
-          python3 tests/test_e2e_mock.py
+          echo "::notice::prove = control-plane + real files/commits. Not live OpenCode quality."
+          python3 tests/test_prove.py

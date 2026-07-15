@@ -445,7 +445,11 @@ def test_executor_mock_inline():
     from foreman.readiness import write_specs
     with tempfile.TemporaryDirectory() as t:
         open(os.path.join(t, "pubspec.yaml"), "w").write(
-            "name: x\nversion: 0.0.1\ndependencies:\n  flutter:\n    sdk: flutter\n"
+            "name: x\nversion: 0.0.1\npublish_to: none\n"
+            "environment:\n  sdk: '>=3.0.0 <4.0.0'\n"
+            "dependencies:\n  flutter:\n    sdk: flutter\n"
+            "dev_dependencies:\n  flutter_test:\n    sdk: flutter\n"
+            "flutter:\n  uses-material-design: true\n"
         )
         os.makedirs(os.path.join(t, "lib"), exist_ok=True)
         open(os.path.join(t, "lib", "main.dart"), "w").write("void main() {}\n")
@@ -461,10 +465,17 @@ def test_executor_mock_inline():
             "## HomeScreen\n- AppBar title Todos\n- ListView of checkbox rows\n- FloatingActionButton to add\n"
             "- Empty and loading states\n",
         )
+        import subprocess
+        subprocess.run(["git", "init"], cwd=t, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=t, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=t, capture_output=True)
+        subprocess.run(["git", "add", "-A"], cwd=t, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=t, capture_output=True)
         r = execute_project(_ROOT, t, template="todo", mock=True, max_tasks=8, force=False)
         assert r.get("ok") is True, r
         assert r.get("tasks_run", 0) >= 1
         assert os.path.exists(os.path.join(t, "tasks", "design_language.md"))
+        assert os.path.exists(os.path.join(t, "lib", "main.dart"))
 
 
 def test_design_approve_gate():

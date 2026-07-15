@@ -62,11 +62,18 @@ foreman run               # autonomous: OpenCode per role until DAG empty
 **TUI:** `opencode --agent foreman` then `/ship`.  
 **Default ship mode:** hard `execute` loop (not freeform chat). Legacy: `foreman run --agent-loop`.
 
-After a real ship:
+**Prove the control plane (no LLM, real files + commits):**
+
+```bash
+foreman prove /tmp/my_prove_app
+# → .foreman/PROVE_REPORT.md
+```
+
+**After a live OpenCode ship:**
 
 ```bash
 foreman report --write    # draft from state + metrics
-# complete human sections → see docs/FIELD_REPORT.md
+# complete human sections → docs/FIELD_REPORT.md
 ```
 
 Limits: [docs/KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md).

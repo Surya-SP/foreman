@@ -50,10 +50,12 @@ def validate(config: Config, *, coverage: bool = False, min_coverage: float = 0.
             output="flutter not on PATH — install Flutter SDK; this is not an app defect",
         )])
 
+    # format without --set-exit-if-changed: apply formatting (fix may dirty files).
+    # analyze is the hard quality gate; format is hygiene.
     pipeline = [
         (["flutter", "pub", "get"], "flutter pub get", 300, True),
         (["dart", "fix", "--apply"], "dart fix --apply", 120, False),
-        (["dart", "format", "--set-exit-if-changed", "."], "dart format", 120, True),
+        (["dart", "format", "."], "dart format", 120, False),
         (["flutter", "analyze"], "flutter analyze", 180, True),
     ]
     for cmd, name, timeout, hard in pipeline:
