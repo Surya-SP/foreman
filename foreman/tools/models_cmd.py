@@ -2,8 +2,8 @@
 """Show / init per-role OpenCode model map.
 
   models_cmd.py
-  models_cmd.py --init          # write ~/.config/foreman/models.json if missing
-  models_cmd.py --model X       # show resolution with CLI force
+  models_cmd.py --init
+  models_cmd.py --model X
 """
 import json, os, sys, time
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -34,11 +34,21 @@ if ui.is_pretty() and not do_init:
         command="foreman models",
         detail=f"config: {out.get('config_path') or '(built-in defaults)'}",
     )
+    aliases = out.get("aliases") or {}
+    if aliases:
+        print("  aliases:", file=sys.stderr)
+        for name, e in sorted(aliases.items()):
+            desc = e.get("description") or ""
+            mid = e.get("model") or ""
+            print(f"    {name:8} {mid}" + (f"  — {desc}" if desc else ""), file=sys.stderr)
+        print(file=sys.stderr)
     for role, meta in sorted((out.get("resolved") or {}).items()):
         m = meta.get("model") or "(OpenCode default)"
         cap = meta.get("capability") or "—"
         src = meta.get("source") or "?"
-        print(f"  {role:16} {cap:12} → {m}  [{src}]", file=sys.stderr)
+        reason = meta.get("reasoning")
+        extra = f" reason={reason}" if reason else ""
+        print(f"  {role:16} {cap:12} → {m}{extra}  [{src}]", file=sys.stderr)
     print(file=sys.stderr)
 
 json.dump(out, sys.stdout, indent=2)

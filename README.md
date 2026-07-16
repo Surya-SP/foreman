@@ -207,30 +207,44 @@ Details: [docs/KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md).
 
 ## Models (quality per dollar)
 
-Executor injects `--model` per role from a **capability map** (not cost tiers).
+Executor injects `--model` per role from a **capability map**. Roles stay fixed; swap models via **aliases**.
 
-| Capability | Default roles | Default alias → model ID |
-|------------|---------------|---------------------------|
-| orchestrator | foreman | smart → `opencode/grok-4.5` |
-| planning | product_owner, architect | smart → `opencode/grok-4.5` |
-| coding | designer, developer | code → `opencode/deepseek-v4-flash` |
-| reasoning | debugger, refactorer | reason → `opencode/deepseek-v4-pro` |
-| review | reviewer, qa_lead | review → `opencode/qwen3-coder` |
-| utility | tester | cheap → `opencode/glm-5.2` |
+| Capability | Roles | Alias | Default model |
+|------------|-------|-------|----------------|
+| orchestrator | foreman | smart | `opencode/grok-4.5` |
+| planning | product_owner, architect | smart | `opencode/grok-4.5` (+ reasoning medium) |
+| coding | designer, developer | code | `opencode/deepseek-v4-flash` (+ low) |
+| reasoning | debugger, refactorer | reason | `opencode/deepseek-v4-pro` (+ high) |
+| review | reviewer, qa_lead | review | `opencode/qwen3-coder` (+ medium) |
+| utility | tester | cheap | `opencode/glm-5.2` |
 
 ```bash
-foreman models              # show resolved map
-foreman models --init       # write ~/.config/foreman/models.json
-# edit aliases/capabilities/roles there, or:
+foreman models              # aliases + role → model
+foreman models --init       # ~/.config/foreman/models.json
 export FOREMAN_MODEL_DEVELOPER=opencode/other-model
-foreman run --model opencode/one-model-for-all   # CLI forces every role
+foreman run --model opencode/one-model-for-all   # forces every role
 ```
 
-**Resolution order:** CLI `--model` → `FOREMAN_MODEL_<ROLE>` → `models.json` → OpenCode default.
+**Config shape** (easy to update when Zen IDs change):
 
-IDs must exist for your OpenCode provider (`opencode models`). No `model:` in agent markdown — one map only.
+```json
+{
+  "aliases": {
+    "code": { "model": "opencode/deepseek-v4-flash", "description": "Fast implementation" }
+  },
+  "capabilities": {
+    "coding": { "model": "code", "reasoning": "low" }
+  },
+  "roles": { "developer": "coding" },
+  "overrides": {},
+  "profiles": {}
+}
+```
 
-Shipped defaults: `foreman/models.json`. User override: `~/.config/foreman/models.json` (or `FOREMAN_MODELS_PATH`).
+- `reasoning` becomes OpenCode `#variant` on the model id when set (if the model supports it).  
+- `profiles` reserved for future `budget` / `balanced` / `premium` — not applied yet.  
+- **Resolution:** CLI `--model` → `FOREMAN_MODEL_<ROLE>` → `models.json` → OpenCode default.  
+- No `model:` in agent markdown. Shipped: `foreman/models.json`.
 
 ---
 

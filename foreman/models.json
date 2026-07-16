@@ -1,19 +1,50 @@
 {
-  "version": 1,
+  "version": 2,
   "aliases": {
-    "smart": "opencode/grok-4.5",
-    "code": "opencode/deepseek-v4-flash",
-    "reason": "opencode/deepseek-v4-pro",
-    "review": "opencode/qwen3-coder",
-    "cheap": "opencode/glm-5.2"
+    "smart": {
+      "model": "opencode/grok-4.5",
+      "description": "Frontier planning / orchestration"
+    },
+    "code": {
+      "model": "opencode/deepseek-v4-flash",
+      "description": "Fast implementation (developer, designer)"
+    },
+    "reason": {
+      "model": "opencode/deepseek-v4-pro",
+      "description": "Complex debugging / refactor"
+    },
+    "review": {
+      "model": "opencode/qwen3-coder",
+      "description": "Code review and QA strategy"
+    },
+    "cheap": {
+      "model": "opencode/glm-5.2",
+      "description": "Utility / tester / low-stakes"
+    }
   },
   "capabilities": {
-    "orchestrator": "smart",
-    "planning": "smart",
-    "coding": "code",
-    "reasoning": "reason",
-    "review": "review",
-    "utility": "cheap"
+    "orchestrator": {
+      "model": "smart"
+    },
+    "planning": {
+      "model": "smart",
+      "reasoning": "medium"
+    },
+    "coding": {
+      "model": "code",
+      "reasoning": "low"
+    },
+    "reasoning": {
+      "model": "reason",
+      "reasoning": "high"
+    },
+    "review": {
+      "model": "review",
+      "reasoning": "medium"
+    },
+    "utility": {
+      "model": "cheap"
+    }
   },
   "roles": {
     "foreman": "orchestrator",
@@ -27,5 +58,6 @@
     "qa_lead": "review",
     "tester": "utility"
   },
-  "overrides": {}
+  "overrides": {},
+  "profiles": {}
 }

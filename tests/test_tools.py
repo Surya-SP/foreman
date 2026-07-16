@@ -549,11 +549,16 @@ def test_models_map_capabilities():
     if _ROOT not in sys.path:
         sys.path.insert(0, _ROOT)
     from foreman.models_map import resolve_model, resolve_all, default_map
-    # developer → coding → code alias
+    # developer → coding → code alias (+ optional #reasoning)
     m = resolve_model("developer", config=default_map())
     assert m["capability"] == "coding"
     assert m["source"] == "config"
-    assert "deepseek" in (m["model"] or "").lower() or m["model"]
+    assert "deepseek" in (m["model"] or "").lower()
+    assert m.get("reasoning") == "low"
+    assert "#low" in (m["model"] or "")
+    # debugger → high reasoning
+    d = resolve_model("debugger", config=default_map())
+    assert d["capability"] == "reasoning" and d.get("reasoning") == "high"
     # CLI wins for all
     m2 = resolve_model("developer", cli_model="opencode/forced", config=default_map())
     assert m2["model"] == "opencode/forced" and m2["source"] == "cli"
@@ -568,6 +573,8 @@ def test_models_map_capabilities():
     assert allr["ok"] and "developer" in allr["resolved"]
     assert allr["resolved"]["designer"]["capability"] == "coding"
     assert allr["resolved"]["debugger"]["capability"] == "reasoning"
+    # alias metadata
+    assert allr["aliases"]["code"]["description"]
 
 
 def test_models_cmd_wrapper():
