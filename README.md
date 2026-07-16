@@ -205,6 +205,35 @@ Details: [docs/KNOWN_LIMITS.md](docs/KNOWN_LIMITS.md).
 
 ---
 
+## Models (quality per dollar)
+
+Executor injects `--model` per role from a **capability map** (not cost tiers).
+
+| Capability | Default roles | Default alias → model ID |
+|------------|---------------|---------------------------|
+| orchestrator | foreman | smart → `opencode/grok-4.5` |
+| planning | product_owner, architect | smart → `opencode/grok-4.5` |
+| coding | designer, developer | code → `opencode/deepseek-v4-flash` |
+| reasoning | debugger, refactorer | reason → `opencode/deepseek-v4-pro` |
+| review | reviewer, qa_lead | review → `opencode/qwen3-coder` |
+| utility | tester | cheap → `opencode/glm-5.2` |
+
+```bash
+foreman models              # show resolved map
+foreman models --init       # write ~/.config/foreman/models.json
+# edit aliases/capabilities/roles there, or:
+export FOREMAN_MODEL_DEVELOPER=opencode/other-model
+foreman run --model opencode/one-model-for-all   # CLI forces every role
+```
+
+**Resolution order:** CLI `--model` → `FOREMAN_MODEL_<ROLE>` → `models.json` → OpenCode default.
+
+IDs must exist for your OpenCode provider (`opencode models`). No `model:` in agent markdown — one map only.
+
+Shipped defaults: `foreman/models.json`. User override: `~/.config/foreman/models.json` (or `FOREMAN_MODELS_PATH`).
+
+---
+
 ## PATH (common failure)
 
 OpenCode shells often omit `~/.local/bin`:

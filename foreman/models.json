@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "aliases": {
+    "smart": "opencode/grok-4.5",
+    "code": "opencode/deepseek-v4-flash",
+    "reason": "opencode/deepseek-v4-pro",
+    "review": "opencode/qwen3-coder",
+    "cheap": "opencode/glm-5.2"
+  },
+  "capabilities": {
+    "orchestrator": "smart",
+    "planning": "smart",
+    "coding": "code",
+    "reasoning": "reason",
+    "review": "review",
+    "utility": "cheap"
+  },
+  "roles": {
+    "foreman": "orchestrator",
+    "product_owner": "planning",
+    "architect": "planning",
+    "designer": "coding",
+    "developer": "coding",
+    "debugger": "reasoning",
+    "refactorer": "reasoning",
+    "reviewer": "review",
+    "qa_lead": "review",
+    "tester": "utility"
+  },
+  "overrides": {}
+}

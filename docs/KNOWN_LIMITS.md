@@ -68,3 +68,11 @@ foreman metrics                 # handoff_success_rate, role_session counts
 ```
 
 `role_session` events are cost/latency **proxies**, not provider dollars.
+
+## Models
+
+Per-role models come from **capabilities** in `models.json` (see README).
+
+- Wrong or unavailable `provider/model` IDs → OpenCode role session fails.
+- Run `opencode models` and edit `~/.config/foreman/models.json` aliases.
+- `foreman run --model X` forces **all** roles to X for that run.

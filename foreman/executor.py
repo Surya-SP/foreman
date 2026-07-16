@@ -62,6 +62,13 @@ def _extract_json_from_text(text: str) -> dict | None:
     return obj
 
 
+def _resolve_role_model(role: str, cli_model: str | None) -> tuple[str | None, dict]:
+    """Return (model_id_or_None, resolve_meta). CLI --model forces all roles."""
+    from foreman.models_map import resolve_model
+    meta = resolve_model(role, cli_model=cli_model)
+    return meta.get("model"), meta
+
+
 def _opencode_role(
     project: str,
     role: str,
@@ -71,11 +78,16 @@ def _opencode_role(
     auto: bool = True,
     dry: bool = False,
 ) -> tuple[int, str]:
-    """Run one OpenCode session as a role subagent. Returns (exit, combined_output)."""
+    """Run one OpenCode session as a role subagent. Returns (exit, combined_output).
+
+    `model` is the CLI global --model (forces every role when set).
+    Per-role models come from models_map unless CLI forces.
+    """
     from foreman.log import metric
     opencode = shutil.which("opencode")
     if not opencode:
         return 127, "opencode not found on PATH"
+    resolved, meta = _resolve_role_model(role, model)
     body = (
         prompt
         + "\n\n## Executor contract\n"
@@ -91,12 +103,16 @@ def _opencode_role(
     ]
     if auto:
         cmd.append("--auto")
-    if model:
-        cmd.extend(["--model", model])
+    if resolved:
+        cmd.extend(["--model", resolved])
     cmd.append(body)
     if dry:
-        metric(_mem_dir(project), "role_session", role=role, dry=True, model=model or "")
-        return 0, "DRY:" + " ".join(cmd[:8])
+        metric(
+            _mem_dir(project), "role_session",
+            role=role, dry=True, model=resolved or "",
+            capability=meta.get("capability"), source=meta.get("source"),
+        )
+        return 0, "DRY:" + " ".join(cmd[:12])
     t0 = time.time()
     try:
         r = subprocess.run(
@@ -108,11 +124,15 @@ def _opencode_role(
         metric(
             _mem_dir(project), "role_session",
             role=role, exit=r.returncode, ms=int((time.time() - t0) * 1000),
-            model=model or "", prompt_chars=len(prompt),
+            model=resolved or "", prompt_chars=len(prompt),
+            capability=meta.get("capability"), source=meta.get("source"),
         )
         return r.returncode, combined
     except subprocess.TimeoutExpired:
-        metric(_mem_dir(project), "role_session", role=role, exit=124, ms=OPENCODE_TIMEOUT * 1000, model=model or "")
+        metric(
+            _mem_dir(project), "role_session",
+            role=role, exit=124, ms=OPENCODE_TIMEOUT * 1000, model=resolved or "",
+        )
         return 124, "opencode role session timed out"
     except OSError as e:
         metric(_mem_dir(project), "role_session", role=role, exit=1, error=str(e))

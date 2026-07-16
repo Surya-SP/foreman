@@ -545,6 +545,40 @@ def test_metrics_handoff():
         assert s["handoff_success_rate"] == 0.5
 
 
+def test_models_map_capabilities():
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+    from foreman.models_map import resolve_model, resolve_all, default_map
+    # developer → coding → code alias
+    m = resolve_model("developer", config=default_map())
+    assert m["capability"] == "coding"
+    assert m["source"] == "config"
+    assert "deepseek" in (m["model"] or "").lower() or m["model"]
+    # CLI wins for all
+    m2 = resolve_model("developer", cli_model="opencode/forced", config=default_map())
+    assert m2["model"] == "opencode/forced" and m2["source"] == "cli"
+    # env wins over config
+    os.environ["FOREMAN_MODEL_TESTER"] = "opencode/env-tester"
+    try:
+        m3 = resolve_model("tester", config=default_map())
+        assert m3["model"] == "opencode/env-tester" and m3["source"] == "env"
+    finally:
+        del os.environ["FOREMAN_MODEL_TESTER"]
+    allr = resolve_all()
+    assert allr["ok"] and "developer" in allr["resolved"]
+    assert allr["resolved"]["designer"]["capability"] == "coding"
+    assert allr["resolved"]["debugger"]["capability"] == "reasoning"
+
+
+def test_models_cmd_wrapper():
+    r = wrap("models")
+    assert r[0] == 0
+    d = js(r[1])
+    assert d.get("ok") is True
+    assert "resolved" in d
+    assert d["resolved"]["developer"]["capability"] == "coding"
+
+
 def test_report_draft():
     if _ROOT not in sys.path:
         sys.path.insert(0, _ROOT)
@@ -1515,6 +1549,8 @@ if __name__ == "__main__":
         ("design check tokens", test_design_check_tokens),
         ("metrics handoff", test_metrics_handoff),
         ("report draft", test_report_draft),
+        ("models map capabilities", test_models_map_capabilities),
+        ("models cmd wrapper", test_models_cmd_wrapper),
         ("state done --force overrides", test_state_done_force_overrides),
         ("debt harvest markers", test_debt_harvest),
         ("debt skips build/", test_debt_skips_build_and_pycache),

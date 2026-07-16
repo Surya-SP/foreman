@@ -277,6 +277,10 @@ PY
     exec python3 "$TOOLS/prove.py" --project "$prove_dir" "$@"
     ;;
 
+  models)
+    exec python3 "$TOOLS/models_cmd.py" --project "$PROJECT" "$@"
+    ;;
+
   log)
     logfile="$PROJECT/.foreman/log.jsonl"
     if [ ! -f "$logfile" ]; then
@@ -431,6 +435,7 @@ foreman — agent / advanced commands (used by the AI, not day-to-day)
   metrics                         # handoff / role_session proxies
   report [--write] [--live]       # field-report draft
   prove [dir]                     # deterministic control-plane ship proof
+  models [--init] [--model X]     # per-role model map (capabilities)
   info | plan | log | debt | memory …
   branch <name> | pr "<title>"
   deploy list | deploy install --device <id>
