@@ -465,7 +465,7 @@ Build (app outside this repo)
 
 Commands
   discover | ready | design run|show|approve|reject
-  run | execute | prove [dir] | status | doctor | init
+  run | execute | prove [dir] | models | status | doctor | init
   metrics | report [--write] | deploy list|install | demo | help
 
 Flow: discover → ready → design approve → run
