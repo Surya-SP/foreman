@@ -1,6 +1,7 @@
 """Minimal project bootstrap: pub get + optional git init + spec seeds."""
 from __future__ import annotations
 
+import json
 import os
 
 from .config import Config
@@ -73,6 +74,23 @@ def ensure_format(config: Config) -> tuple[bool, list[str]]:
             with open(p, "w") as f:
                 f.write(seed)
             msgs.append(f"seeded tasks/{name}")
+
+    # Seed opencode.json with Dart LSP so every OpenCode agent
+    # spawned by Foreman in this project has code intelligence.
+    oc = os.path.join(project, "opencode.json")
+    if config.framework == "flutter" and not os.path.exists(oc):
+        with open(oc, "w") as f:
+            f.write(json.dumps({
+                "$schema": "https://opencode.ai/config.json",
+                "lsp": {
+                    "dart": {
+                        "command": ["dart", "language-server", "--protocol=lsp"],
+                        "extensions": [".dart"],
+                        "enabled": True,
+                    },
+                },
+            }, indent=2) + "\n")
+        msgs.append("seeded opencode.json (Dart LSP)")
 
     if config.framework == "flutter" and which("flutter"):
         res = run_command(["flutter", "pub", "get"], cwd=project, timeout=300, heartbeat=False)
