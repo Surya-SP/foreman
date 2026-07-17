@@ -10,7 +10,7 @@ from .proc import run_command, which
 
 
 def which_flutter() -> bool:
-    return which("flutter") is not None
+    return which("flutter")
 
 
 def _has_tests(project: str) -> bool:
