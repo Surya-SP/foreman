@@ -249,13 +249,15 @@ def run_designer_phase(
             }],
             "design_language_md": (
                 "# Design Language — CI\n\n## 1. Personality & principles\nCalm utility\n\n"
-                "## 2. Color\n- Primary: #2196F3\n- On primary: #FFFFFF\n- Surface: #FFFBFE\n"
+                "## 2. UI kit\nshadcn_flutter\n\n"
+                "## 3. Color\n- Primary: #2196F3\n- On primary: #FFFFFF\n- Surface: #FFFBFE\n"
                 "- On surface: #1C1B1F\n- Error: #B3261E\n\n"
-                "## 3. Typography\nM3 type scale\n\n## 4. Space & layout\n8dp grid\n\n"
-                "## 5. Shape & elevation\n12dp cards\n\n## 6. Components\nMaterial 3\n\n"
-                "## 7. Navigation\nBottom bar if multi-section\n\n## 8. Motion\nShort fades\n\n"
-                "## 9. Content & empty/loading/error\nRequired\n\n## 10. Accessibility\n48dp\n\n"
-                "## 11. Do / Don't\nNo purple gradient slop\n\n## 12. Screen specs\nHomeScreen\n"
+                "## 4. Typography\nType scale\n\n## 5. Space & layout\n4 8 12 16 24\n\n"
+                "## 6. Shape & elevation\n12 radius cards\n\n"
+                "## 7. Components\nShadcnApp, Scaffold, AppBar, Button(primary), Card\n\n"
+                "## 8. Navigation\nBottom bar if multi-section\n\n## 9. Motion\n200ms\n\n"
+                "## 10. Content & empty/loading/error\nRequired\n\n## 11. Accessibility\n48dp\n\n"
+                "## 12. Do / Don't\nNo purple gradient slop\n\n## 13. Screen specs\nHomeScreen\n"
             ),
             "token_index": {
                 "primary": "#2196F3",

@@ -121,7 +121,7 @@ def _build_design(app_name: str, primary: str, secondary: str, screens: list[str
 {scr}
 
 ## Notes
-{notes.strip() or "Match Material 3 patterns. Prefer Flutter SDK widgets."}
+{notes.strip() or "Use shadcn_flutter (docs/UI_SPEC.md). Prefer kit components over Material."}
 
 ## States
 - Design loading, empty, error explicitly on every screen.

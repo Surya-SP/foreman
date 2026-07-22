@@ -77,6 +77,20 @@ foreman run                   # execute loop: OpenCode per role until DAG empty
 | `design approve` | Human only → `tasks/design_language.md` + approved status |
 | `run` | If not ready → discovery OpenCode session. If design not approved → exit 2 with `WAITING FOR: design approve`. Else → `execute` |
 
+### UI kit (every app Foreman builds)
+
+`foreman init` seeds into the **app** project (not the Foreman repo):
+
+| Path | Purpose |
+|------|---------|
+| `docs/UI_SPEC.md` | Design system: spacing, radius, anti-slop, stack rules |
+| `docs/shadcn_flutter_kit.md` | Condensed documented APIs |
+| `docs/shadcn_flutter_llms.txt` | Full AI reference (downloaded/cached when network available) |
+| `opencode.json` | Dart LSP for OpenCode agents |
+| `pubspec` | `flutter pub add shadcn_flutter` when Flutter is on PATH |
+
+Designer / developer / architect / reviewer prompts require: **read kit docs first**, only documented APIs, prefer shadcn over Material. Riverpod / GoRouter are preferred when state/routing complexity warrants them — not forced on every app.
+
 ### What `foreman run` does after gates pass
 
 1. Seed task DAG if empty (`state template todo` when using templates, or empty until seeded)

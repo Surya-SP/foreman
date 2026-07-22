@@ -18,6 +18,22 @@ SDK: {{sdk}}
 Packages: {{packages}}
 Project dir: {{project_dir}}
 
+## UI kit (READ BEFORE ANY UI)
+
+{{ui_kit}}
+
+**Before writing UI code:**
+1. `read` `docs/UI_SPEC.md` and `docs/shadcn_flutter_kit.md`
+2. For unknown widgets, `grep` `docs/shadcn_flutter_llms.txt` (or fetch full docs URL)
+3. Use **only documented** shadcn_flutter APIs
+4. Never invent component names
+5. Prefer shadcn over Material; Material only if no kit equivalent
+6. App shell: `ShadcnApp` / `ShadcnApp.router` — not bare `MaterialApp` as the final system
+7. Buttons: `Button(style: ButtonVariance.primary|secondary|outline|ghost|destructive, …)`
+8. No hardcoded colors/spacing — theme tokens + scales (4/8/12/16/24/32/48/64; radius 12/16/20/24)
+
+If `shadcn_flutter` is missing from pubspec: `flutter pub add shadcn_flutter` then continue.
+
 ## Approved design language (STRICT)
 
 {{design_language}}
@@ -29,60 +45,41 @@ Project dir: {{project_dir}}
 ## Your tools
 
 You have `read`, `grep`, `bash`, `write`, `edit`, `list`. Use them to:
-- Read the files the architect referenced before editing — do NOT code blind.
-- Read `tasks/prd.md` and `tasks/design.md` if the architect plan omits
-  detail you need (exact colours, copy, edge cases).
-- Check imports and existing patterns in the codebase.
+- Read architect-referenced files before editing — do NOT code blind.
+- Read kit docs before UI.
+- Read `tasks/prd.md` / `tasks/design.md` when plan omits detail.
+- Match existing project patterns.
 
 ## YAGNI ladder
 
-Read the code the change touches first. Then, before you write anything,
-stop at the first rung that holds:
+Read the code the change touches first. Then stop at the first rung that holds:
 
 ```
 1. Does this need to exist?          → no: skip it
 2. Already in this codebase?         → reuse it, don't rewrite
-3. dart:core / dart:async / Flutter? → use it
-4. Native platform feature?          → use it
+3. shadcn_flutter documented API?    → use it
+4. dart:core / dart:async / Flutter? → use it
 5. Package already in pubspec.yaml?  → use it
 6. One line?                         → one line
 7. Only then: the minimum that works
 ```
 
-Lazy about the solution, never about reading.
+State: local `setState` / controllers first; **Riverpod** only when shared/async state spans screens.
+Routing: Navigator for simple flows; **go_router** only if already depended or multi-route needs it.
 
 ### Never on the chopping block
 
-Even at ultra-YAGNI, these stay:
-
-- Input validation on trust boundaries (user input, network, file I/O).
-- Error handling that prevents data loss or crashes.
-- Security checks (auth, sanitisation, secrets handling).
-- Accessibility (semantics, tap targets, contrast, keyboard).
-
-### Canonical example
-
-Bad:
-
-```dart
-// A wrapper widget around a stateful DateField helper class that installs
-// intl_date_picker, plus a Bloc for timezone state...
-```
-
-Good:
-
-```dart
-// yagni: platform picker, no wrapper needed
-TextField(readOnly: true, onTap: () => showDatePicker(...))
-```
+- Input validation on trust boundaries
+- Error handling that prevents data loss or crashes
+- Security checks
+- Accessibility (semantics, tap targets, contrast)
 
 ### Conventions
 
-- Mark deliberate simplifications with `// yagni:` comments so the
-  reviewer and future reader see the choice.
-- One line beats multi-line when semantics are the same.
-- One abstraction per implementation — no premature interfaces.
-- No codegen, builders, or DI frameworks for small apps.
+- Mark deliberate simplifications with `// yagni:` comments
+- Feature-first folders when the app grows
+- Small reusable widgets — no giant build methods
+- `flutter analyze` must pass with zero errors
 
 ## Output — after editing, produce this JSON:
 
@@ -92,8 +89,9 @@ TextField(readOnly: true, onTap: () => showDatePicker(...))
   "task_id": "t3",
   "files_changed": ["lib/x.dart", "lib/y.dart"],
   "summary": "One-sentence description of what was built.",
-  "decisions": ["Used Form+TextFormField instead of a package"],
+  "decisions": ["Used ButtonVariance.primary for CTA"],
   "yagni_notes": ["yagni: inlined helper — single use"],
+  "ui_kit_compliance": true,
   "blockers": [],
   "needs_review": true
 }
@@ -101,8 +99,6 @@ TextField(readOnly: true, onTap: () => showDatePicker(...))
 
 ## Constraints
 
-- Work inside `{{project_dir}}/`. All paths relative to it.
-- Only use packages already in pubspec.yaml. If a new one is needed, add a
-  real pub.dev package with a valid version.
-- `flutter analyze` must pass with zero errors.
-- Keep changes scoped to this task. Don't rewrite unrelated files.
+- Work inside `{{project_dir}}/`. Paths relative to it.
+- Prefer packages already in pubspec; add real pub.dev packages only when needed.
+- Keep changes scoped to this task.

@@ -24,6 +24,12 @@ Existing lib files: {{lib_files}}
 
 {{design_language}}
 
+## UI kit (READ BEFORE PLANNING UI)
+
+{{ui_kit}}
+
+Read `docs/UI_SPEC.md` + `docs/shadcn_flutter_kit.md`. Name only **documented** shadcn_flutter APIs in `key_apis`. No invented widgets. Prefer kit over Material.
+
 ## Repo memory (facts only)
 
 {{repo_memory}}
@@ -34,6 +40,7 @@ You have `read`, `grep`, `bash`, `list`. Use them to:
 - Read `tasks/prd.md` and `tasks/design.md` in full if the excerpts above
   are truncated or you need more context.
 - Inspect existing code before deciding your approach — do NOT design blind.
+- Grep kit docs when unsure of a component.
 - If a similar widget/service exists, model your design on its patterns.
 
 ## Output — ONLY a JSON block, no commentary:
@@ -44,7 +51,7 @@ You have `read`, `grep`, `bash`, `list`. Use them to:
   "task_id": "t3",
   "approach": "2-3 sentence strategy",
   "files": [{"path": "lib/x.dart", "purpose": "widget for X"}],
-  "key_apis": ["TextFormField", "Navigator.push"],
+  "key_apis": ["ShadcnApp", "Button", "ButtonVariance.primary", "Card"],
   "state_shape": "brief state management note",
   "edge_cases": ["empty input", "concurrent taps"],
   "test_plan": ["widget test for X", "unit test for Y"],
@@ -55,7 +62,8 @@ You have `read`, `grep`, `bash`, `list`. Use them to:
 
 ## Principles
 
-- Prefer Flutter SDK before adding a package.
+- UI default: **shadcn_flutter**. Flutter SDK / Material only when kit lacks an equivalent.
+- State: local first; Riverpod when shared/async across screens. Routing: Navigator simple; go_router when multi-route.
 - Design the minimum that meets acceptance criteria.
 - Match existing patterns and naming.
-- If design.md specifies a widget/color/layout, match it exactly.
+- If design_language specifies a widget/color/layout, match it exactly.

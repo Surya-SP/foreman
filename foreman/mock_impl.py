@@ -297,9 +297,9 @@ def mock_handoff_payload(role: str, task_id: str, files: list[str] | None = None
     if role == "architect":
         return {
             "role": "architect",
-            "approach": f"Implement {task_id} with Material 3 and design primary",
+            "approach": f"Implement {task_id} with shadcn_flutter kit tokens and design primary",
             "files": [{"path": f, "purpose": task_id} for f in files],
-            "key_apis": ["MaterialApp", "ListTile"],
+            "key_apis": ["ShadcnApp", "Button", "Card"],
             "state_shape": "local repository",
             "edge_cases": ["empty list"],
             "test_plan": ["unit test model"],
@@ -346,14 +346,16 @@ def mock_handoff_payload(role: str, task_id: str, files: list[str] | None = None
             }],
             "design_language_md": (
                 f"# Design Language — Todos\n\n## 1. Personality & principles\nCalm utility\n\n"
-                f"## 2. Color\n- Primary: #{PRIMARY_HEX}\n- On primary: #FFFFFF\n"
+                f"## 2. UI kit\nshadcn_flutter\n\n"
+                f"## 3. Color\n- Primary: #{PRIMARY_HEX}\n- On primary: #FFFFFF\n"
                 f"- Surface: #FFFBFE\n- On surface: #1C1B1F\n- Error: #B3261E\n\n"
-                f"## 3. Typography\nM3 type scale\n\n## 4. Space & layout\n8dp\n\n"
-                f"## 5. Shape & elevation\n12dp\n\n## 6. Components\nMaterial 3\n\n"
-                f"## 7. Navigation\nSingle screen\n\n## 8. Motion\nMinimal\n\n"
-                f"## 9. Content & empty/loading/error\nEmpty: No todos yet\n\n"
-                f"## 10. Accessibility\n48dp\n\n## 11. Do / Don't\nNo purple slop\n\n"
-                f"## 12. Screen specs\nHomeScreen\n"
+                f"## 4. Typography\nType scale\n\n## 5. Space & layout\n4 8 12 16 24\n\n"
+                f"## 6. Shape & elevation\n12 radius\n\n"
+                f"## 7. Components\nShadcnApp, Button(primary), Card\n\n"
+                f"## 8. Navigation\nSingle screen\n\n## 9. Motion\n200ms\n\n"
+                f"## 10. Content & empty/loading/error\nEmpty: No todos yet\n\n"
+                f"## 11. Accessibility\n48dp\n\n## 12. Do / Don't\nNo purple slop\n\n"
+                f"## 13. Screen specs\nHomeScreen\n"
             ),
             "token_index": {
                 "primary": f"#{PRIMARY_HEX}",

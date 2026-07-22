@@ -38,19 +38,20 @@ ROLE_FILES = {
 # Only compute placeholders the role actually uses.
 ROLE_NEEDS = {
     "architect": {"task_description", "acceptance_criteria", "sdk", "packages", "lib_files",
-                  "project_memory", "design", "design_language", "repo_memory"},
+                  "project_memory", "design", "design_language", "ui_kit", "repo_memory"},
     "developer": {"task_description", "acceptance_criteria", "architect_plan", "sdk", "packages",
-                  "project_dir", "design_language", "repo_memory"},
-    "reviewer":  {"task_description", "acceptance_criteria", "diff", "design_language", "repo_memory"},
+                  "project_dir", "design_language", "ui_kit", "repo_memory"},
+    "reviewer":  {"task_description", "acceptance_criteria", "diff", "design_language", "ui_kit",
+                  "repo_memory"},
     "tester":    {"task_description", "acceptance_criteria", "changed_files", "project_dir", "test_plan",
                   "repo_memory"},
     "debugger":  {"task_description", "changed_files", "failed_steps", "validation_error", "repo_memory"},
     "refactorer":{"task_description", "review_findings", "changed_files", "project_dir",
-                  "design_language", "repo_memory"},
+                  "design_language", "ui_kit", "repo_memory"},
     "product_owner": {"prd", "design", "project_memory", "repo_memory"},
     "qa_lead":   {"task_description", "acceptance_criteria", "changed_files", "design",
-                  "design_language", "repo_memory"},
-    "designer":  {"prd", "design", "project_dir", "repo_memory"},
+                  "design_language", "ui_kit", "repo_memory"},
+    "designer":  {"prd", "design", "project_dir", "ui_kit", "repo_memory"},
 }
 
 def _arg(name, default=None):
@@ -149,6 +150,12 @@ if "design_language" in needs:
             "human should run: foreman design approve after designer review)"
         )
 
+if "ui_kit" in needs:
+    from foreman.ui_kit import ui_kit_block, seed_ui_kit
+    # Ensure kit docs exist (no network in spawn; package add skipped)
+    seed_ui_kit(target, fetch_llms=False, add_package=False)
+    values["ui_kit"] = ui_kit_block(target)
+
 if "project_memory" in needs:
     state_path = os.path.join(target, ".foreman", "tasks.json")
     done = []
@@ -237,6 +244,8 @@ if role in ("architect", "developer", "reviewer", "refactorer", "qa_lead"):
         "Do not invent colors, type scales, or component patterns that conflict with it. "
         "If design_language is missing/unapproved, stop and tell Tech Lead to run "
         "`foreman design run` → human `foreman design approve`.\n"
+        "UI kit is **shadcn_flutter** — read docs/UI_SPEC.md + docs/shadcn_flutter_kit.md "
+        "before UI; never invent component APIs.\n"
     )
 missing = re.findall(r"\{\{(\w+)\}\}", filled)
 

@@ -32,18 +32,20 @@ _DESIGN_SEED = """# Design
 - Users:
 
 ## Color
-- Primary:
-- Secondary:
-- Background / Surface:
-- Error:
+- Accent (default #3B82F6 if unset):
+- Surfaces: neutral grayscale, dark-mode first
+
+## Kit
+- UI: shadcn_flutter (see docs/UI_SPEC.md)
+- Do not invent components — read docs/shadcn_flutter_kit.md
 
 ## Typography
-- Font:
+- Font: Inter / system UI
 - Scale: display / headline / title / body / label
 
 ## Layout
-- Spacing base: 8dp
-- Radius: 8 cards / 12 sheets
+- Spacing: 4 8 12 16 24 32 48 64
+- Radius: 12 16 20 24
 
 ## States
 - Design loading, empty, error explicitly.
@@ -91,6 +93,13 @@ def ensure_format(config: Config) -> tuple[bool, list[str]]:
                 },
             }, indent=2) + "\n")
         msgs.append("seeded opencode.json (Dart LSP)")
+
+    # UI kit: teach agents shadcn_flutter before they write UI
+    if config.framework == "flutter":
+        from .ui_kit import seed_ui_kit
+        skip_fetch = os.environ.get("CI") == "true" or os.environ.get("FOREMAN_SKIP_LLMS") == "1"
+        uk = seed_ui_kit(project, fetch_llms=not skip_fetch, add_package=bool(which("flutter")))
+        msgs.extend(uk.get("messages") or [])
 
     if config.framework == "flutter" and which("flutter"):
         res = run_command(["flutter", "pub", "get"], cwd=project, timeout=300, heartbeat=False)

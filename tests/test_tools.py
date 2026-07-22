@@ -1120,9 +1120,27 @@ def test_wrapper_state_escalations():
 def test_init_seeds_specs():
     with tempfile.TemporaryDirectory() as t:
         open(os.path.join(t, "pubspec.yaml"), "w").write("name: fake\n")
-        tool("init.py", project=t)
+        env = {**os.environ, "FOREMAN_SKIP_LLMS": "1", "CI": "true"}
+        run([sys.executable, os.path.join(TOOLS, "init.py"), "--project", t], env=env)
         assert os.path.exists(os.path.join(t, "tasks", "prd.md"))
         assert os.path.exists(os.path.join(t, "tasks", "design.md"))
+        assert os.path.exists(os.path.join(t, "docs", "UI_SPEC.md"))
+        assert os.path.exists(os.path.join(t, "docs", "shadcn_flutter_kit.md"))
+        assert os.path.exists(os.path.join(t, "opencode.json"))
+
+
+def test_ui_kit_block():
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+    from foreman.ui_kit import seed_ui_kit, ui_kit_block
+    with tempfile.TemporaryDirectory() as t:
+        open(os.path.join(t, "pubspec.yaml"), "w").write("name: fake\n")
+        r = seed_ui_kit(t, fetch_llms=False, add_package=False)
+        assert r["ok"]
+        assert os.path.exists(os.path.join(t, "docs", "UI_SPEC.md"))
+        block = ui_kit_block(t)
+        assert "shadcn_flutter" in block
+        assert "UI_SPEC.md" in block
 
 
 def test_handoff_archives_previous():
@@ -1539,6 +1557,7 @@ if __name__ == "__main__":
         ("wrapper state resume", test_wrapper_state_resume),
         ("wrapper state escalations", test_wrapper_state_escalations),
         ("init seeds prd/design", test_init_seeds_specs),
+        ("ui kit seed+block", test_ui_kit_block),
         ("handoff archives previous", test_handoff_archives_previous),
         ("state task shows conflicts", test_state_task_shows_conflicts),
         ("wrapper unknown state subcommand", test_wrapper_unknown_state_subcommand),
